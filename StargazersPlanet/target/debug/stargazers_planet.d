@@ -1,0 +1,1 @@
+C:\Users\sf129\RustroverProjects\Stargazers\StargazersPlanet\target\debug\stargazers_planet.exe: C:\Users\sf129\RustroverProjects\Stargazers\StargazersPlanet\src\lib.rs C:\Users\sf129\RustroverProjects\Stargazers\StargazersPlanet\src\main.rs

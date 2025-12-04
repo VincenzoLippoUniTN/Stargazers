@@ -1,19 +1,12 @@
-use common_game::components::{planet, resource};
-use common_game::protocols::messages;
 use std::sync::mpsc;
 use common_game::components::planet::{Planet, PlanetAI, PlanetState, PlanetType};
 use common_game::components::resource::{Combinator, Generator};
 use common_game::components::rocket::Rocket;
 use common_game::protocols::messages;
 
-fn main() {
-
-    println!("Hello, world!");
-
+pub struct AI {
+    started: bool,
 }
-
-struct AI { /* your AI state here */ }
-
 impl PlanetAI for AI {
     fn handle_orchestrator_msg(
         &mut self,
@@ -47,7 +40,11 @@ impl PlanetAI for AI {
         None
     }
 
-    fn start(&mut self, state: &PlanetState) { /* startup code */ }
+    fn start(&mut self, state: &PlanetState) {
+        println!("Planet {}: AI started!", state.id());
+        self.started = true;
+
+    }
     fn stop(&mut self, state: &PlanetState) { /* stop code */ }
 }
 pub fn create_planet(
@@ -57,8 +54,8 @@ pub fn create_planet(
     tx_explorer: mpsc::Sender<messages::PlanetToExplorer>
 ) -> Planet {
     let id = 1;
-    let ai = AI {};
-    let gen_rules = vec![/* your recipes */];
+    let ai = AI {started: false};
+    let gen_rules = vec![common_game::components::resource::BasicResourceType::Oxygen];
     let comb_rules = vec![/* your recipes */];
 
     // Construct the planet and return it

@@ -465,75 +465,65 @@ impl Planet {
     /// describing the cause. For now, the only possible cause of error is orchestrator disconnection
     /// from one of the channels.
     pub fn run(&mut self) -> Result<(), String> {
-        // run the planet stopped by default
-        // and wait for a StartPlanetAI message
-        self.wait_for_start()?;
-
-        self.ai.start(&self.state);
-
-        // maybe spawn a thread for async event handling ?
         loop {
-            // TODO: disconnection error handling
+            // Blocco fino a StartPlanetAI
+            self.wait_for_start()?;
 
-            // orchestrator incoming message polling
-            match self.from_orchestrator.try_recv() {
-                // TODO: do something with the StartPlanetAI message content
-                Ok(OrchestratorToPlanet::StartPlanetAI) => {}
-                // TODO: do something with the StopPlanetAI message content
-                Ok(OrchestratorToPlanet::StopPlanetAI) => {
-                    self.ai.stop(&self.state);
-                    self.wait_for_start()?; // blocking wait
+            // Start AI
+            self.ai.start(&self.state);
+            let _ = self.to_orchestrator.send(
+                PlanetToOrchestrator::StartPlanetAIResult { planet_id: self.id() }
+            ).map_err(|_| "Orchestrator disconnected".to_string())?;
 
-                    // restart AI
-                    self.ai.start(&self.state)
-                }
-                Ok(OrchestratorToPlanet::Asteroid(_)) => {
-                    let rocket =
-                        self.ai
-                            .handle_asteroid(&mut self.state, &self.generator, &self.combinator);
-                    self.to_orchestrator
-                        .send(PlanetToOrchestrator::AsteroidAck {
-                            planet_id: self.id(),
-                            rocket,
-                        })
-                        .map_err(|_| "Orchestrator disconnected".to_string())?;
-                }
-                Ok(msg) => {
-                    self.ai
-                        .handle_orchestrator_msg(
-                            &mut self.state,
-                            &self.generator,
-                            &self.combinator,
-                            msg,
-                        )
-                        .map(|response| self.to_orchestrator.send(response))
-                        .transpose()
-                        .map_err(|_| "Orchestrator disconnected".to_string())?;
-                }
+            // Loop di gestione messaggi finché non ricevi Stop
+            loop {
+                match self.from_orchestrator.try_recv() {
+                    Ok(OrchestratorToPlanet::StopPlanetAI) => {
+                        self.ai.stop(&self.state);
 
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err("Orchestrator disconnected".to_string());
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
-            }
+                        // invio conferma immediata allo orchestrator
+                        let _ = self.to_orchestrator.send(
+                            PlanetToOrchestrator::StopPlanetAIResult { planet_id: self.id() }
+                        ).map_err(|_| "Orchestrator disconnected".to_string())?;
 
-            // explorer incoming message polling
-            match self.from_explorer.try_recv() {
-                Ok(msg) => {
-                    if let Some(response) = self.ai.handle_explorer_msg(
-                        &mut self.state,
-                        &self.generator,
-                        &self.combinator,
-                        msg,
-                    ) {
-                        self.to_explorer
-                            .send(response)
-                            .unwrap_or_else(|_| println!("No explorer connected!"))
+                        // esci dal loop interno, torni a wait_for_start
+                        break;
                     }
+
+                    Ok(OrchestratorToPlanet::Asteroid(ast)) => {
+                        let rocket = self.ai.handle_asteroid(&mut self.state, &self.generator, &self.combinator);
+                        let _ = self.to_orchestrator.send(
+                            PlanetToOrchestrator::AsteroidAck { planet_id: self.id(), rocket }
+                        ).map_err(|_| "Orchestrator disconnected".to_string())?;
+                    }
+
+                    Ok(msg) => {
+                        if let Some(resp) = self.ai.handle_orchestrator_msg(
+                            &mut self.state, &self.generator, &self.combinator, msg
+                        ) {
+                            let _ = self.to_orchestrator.send(resp)
+                                .map_err(|_| "Orchestrator disconnected".to_string())?;
+                        }
+                    }
+
+                    Err(mpsc::TryRecvError::Disconnected) => return Err("Orchestrator disconnected".to_string()),
+                    Err(mpsc::TryRecvError::Empty) => {}
                 }
 
-                Err(mpsc::TryRecvError::Disconnected) => {}
-                Err(mpsc::TryRecvError::Empty) => {}
+                // gestione esploratori
+                match self.from_explorer.try_recv() {
+                    Ok(msg) => {
+                        if let Some(resp) = self.ai.handle_explorer_msg(
+                            &mut self.state, &self.generator, &self.combinator, msg
+                        ) {
+                            let _ = self.to_explorer.send(resp);
+                        }
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {}
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
+
+                thread::sleep(Duration::from_millis(1));
             }
         }
     }
@@ -542,13 +532,14 @@ impl Planet {
     // a StartPlanetAI message is received
     fn wait_for_start(&self) -> Result<(), String> {
         loop {
-            // TODO: error handling
-            let recv_re = self.from_orchestrator.recv();
-            match recv_re {
-                // TODO: do something with the StartPlanetAI message content
+            match self.from_orchestrator.recv() {
                 Ok(OrchestratorToPlanet::StartPlanetAI) => return Ok(()),
+                Ok(OrchestratorToPlanet::StopPlanetAI) => {
+                    // Ignoriamo Stop finché non siamo partiti
+                    continue;
+                }
+                Ok(_) => continue, // ignora altri messaggi
                 Err(_) => return Err("Orchestrator disconnected!".to_string()),
-                _ => {}
             }
         }
     }

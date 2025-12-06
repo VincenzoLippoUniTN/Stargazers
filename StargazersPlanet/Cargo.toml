@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 common-game = { workspace = true }
+log = "0.4"
+env_logger = "0.11"

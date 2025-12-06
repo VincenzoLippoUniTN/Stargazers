@@ -3,6 +3,7 @@ use common_game::components::planet::{Planet, PlanetAI, PlanetState, PlanetType}
 use common_game::components::resource::{BasicResourceType, ComplexResourceType, Combinator, Generator, BasicResource, ComplexResourceRequest, ComplexResource};
 use common_game::components::rocket::Rocket;
 use common_game::protocols::messages;
+use log::{ info, warn,error,debug};
 
 // Group-defined AI struct
 struct AI {
@@ -20,11 +21,15 @@ impl PlanetAI for AI {
     ) -> Option<messages::PlanetToOrchestrator> {
         match msg {
             messages::OrchestratorToPlanet::Sunray(s) => {
-                state.charge_cell(s); // Carica la cella
+                info!("Planet {} receive the Sunray from the Orchestrator",state.id());
+                state.charge_cell(s);
+                info!("Planet {}: Cell charged", state.id());
                 Some(messages::PlanetToOrchestrator::SunrayAck { planet_id: state.id() })
+
             }
 
             messages::OrchestratorToPlanet::InternalStateRequest => {
+                info!("Planet {} receive the request of information from the Orchestrator",state.id());
                 let dummy_state = state.to_dummy();
                 Some(messages::PlanetToOrchestrator::InternalStateResponse {
                     planet_id: state.id(),
@@ -33,6 +38,7 @@ impl PlanetAI for AI {
             }
 
             messages::OrchestratorToPlanet::IncomingExplorerRequest { explorer_id: _explorer_id, new_mpsc_sender: _new_mpsc_sender } => {
+                info!("Planet {} receive the Incoming Explorer request from the Orchestrator",state.id());
                 Some(messages::PlanetToOrchestrator::IncomingExplorerResponse {
                     planet_id: state.id(),
                     res: Ok(()),
@@ -40,6 +46,7 @@ impl PlanetAI for AI {
             }
 
             messages::OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id: _explorer_id } => {
+                info!("Planet {} receive the Outgoing Explorer request from the Orchestrator",state.id());
                 Some(messages::PlanetToOrchestrator::OutgoingExplorerResponse {
                     planet_id: state.id(),
                     res: Ok(()),
@@ -253,18 +260,18 @@ impl PlanetAI for AI {
         // 1. Search a cell charged
         match state.full_cell() {
             None => {
-                println!("Planet {}: NO charged cells, asteroid will destroy the planet!", state.id());
+                info!("Planet {}: NO charged cells, asteroid will destroy the planet!", state.id());
                 None
             }
 
             Some((_cell, idx)) => {
                 match state.build_rocket(idx) {
                     Ok(_) => {
-                        println!("Planet {}: Rocket successfully built!", state.id());
+                        info!("Planet {}: Rocket successfully built!", state.id());
                         state.take_rocket()
                     }
                     Err(e) => {
-                        println!(
+                        error!(
                             "Planet {}: Failed to build rocket: {}",
                             state.id(),
                             e
@@ -277,13 +284,13 @@ impl PlanetAI for AI {
     }
 
     fn start(&mut self, state: &PlanetState) {
-        println!("Planet {}: AI started!", state.id());
+        info!("Planet {}: AI started!", state.id());
         self.started = true;
         self.stopped = false;
     }
 
     fn stop(&mut self, state: &PlanetState) {
-        println!("Planet {}: AI stopped!", state.id());
+        info!("Planet {}: AI stopped!", state.id());
         self.stopped = true;
         self.started = false;
     }
@@ -323,11 +330,12 @@ pub fn create_planet(
     ) {
         Ok(planet) => {
             // TODO: Log planet creation success
-            println!("Planet {} created!", planet.id());
+            info!("Planet {} created!", planet.id());
             planet
         }
         Err(msg) => {
             // TODO: Log planet creation failure
+            error!("Planet {} creation failed: {}", id, msg);
             panic!("Planet {} created with error: {}", id, msg);
         }
     }
@@ -496,7 +504,7 @@ mod tests {
         // --- launch planet in a thread ---
         let handle = thread::spawn(move || {
             if let Err(e) = planet.run() {
-                eprintln!("Planet thread error: {}", e);
+                error!("Planet thread error: {}", e);
             }
         });
 
@@ -505,9 +513,9 @@ mod tests {
         if let Ok(PlanetToOrchestrator::StartPlanetAIResult { planet_id }) =
             rx_to_orch.recv_timeout(Duration::from_secs(2))
         {
-            println!("Orchestrator: Planet {} started!", planet_id);
+            info!("Orchestrator: Planet {} started!", planet_id);
         } else {
-            println!("Orchestrator: Start timeout");
+            info!("Orchestrator: Start timeout");
         }
 
         // --- Send SUNRAY ---
@@ -515,26 +523,26 @@ mod tests {
         if let Ok(PlanetToOrchestrator::SunrayAck { planet_id }) =
             rx_to_orch.recv_timeout(Duration::from_secs(2))
         {
-            println!("Orchestrator: SunrayAck received from Planet {}", planet_id);
+            info!("Orchestrator: SunrayAck received from Planet {}", planet_id);
         } else {
-            println!("Orchestrator: SunrayAck timeout");
+            info!("Orchestrator: SunrayAck timeout");
         }
 
         // --- Send ASTEROID ---
-        println!("\nOrchestrator: Sending Asteroid...");
+        info!("\nOrchestrator: Sending Asteroid...");
         tx_to_planet.send(OrchestratorToPlanet::Asteroid(Asteroid::default())).unwrap();
 
         match rx_to_orch.recv_timeout(Duration::from_secs(2)) {
             Ok(PlanetToOrchestrator::AsteroidAck { planet_id, destroyed}) => {
-                println!("Orchestrator: AsteroidAck received from Planet {}", planet_id);
+                info!("Orchestrator: AsteroidAck received from Planet {}", planet_id);
                 if destroyed {
-                    println!("Orchestrator: Planet {} destroyed the asteroid.", planet_id);
+                    info!("Orchestrator: Planet {} destroyed the asteroid.", planet_id);
                 } else {
-                    println!("Orchestrator: Planet {} did NOT destroyed the asteroid!", planet_id);
+                    info!("Orchestrator: Planet {} did NOT destroyed the asteroid!", planet_id);
                 }
             }
-            Ok(_) => println!("Orchestrator: Unexpected message received"),
-            Err(_) => println!("Orchestrator: AsteroidAck timeout"),
+            Ok(_) => info!("Orchestrator: Unexpected message received"),
+            Err(_) => error!("Orchestrator: AsteroidAck timeout"),
         }
 
         // --- Stop AI ---
@@ -542,9 +550,9 @@ mod tests {
         if let Ok(PlanetToOrchestrator::StopPlanetAIResult { planet_id }) =
             rx_to_orch.recv_timeout(Duration::from_secs(2))
         {
-            println!("Orchestrator: Planet {} stopped!", planet_id);
+            info!("Orchestrator: Planet {} stopped!", planet_id);
         } else {
-            println!("Orchestrator: Stop timeout");
+            info!("Orchestrator: Stop timeout");
         }
 
         // --- wait thread of the planet ---

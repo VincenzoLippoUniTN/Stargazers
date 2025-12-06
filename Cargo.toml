@@ -11,4 +11,3 @@ common-game = { git = "https://github.com/unitn-ap-2025/common" }
 
 [dependencies]
 common-game = { workspace = true }
-StargazersPlanet = { path = "./StargazersPlanet" }

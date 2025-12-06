@@ -3,5 +3,12 @@ name = "Stargazers"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace]
+members = ["StargazersPlanet"]
+
+[workspace.dependencies]
 common-game = { git = "https://github.com/unitn-ap-2025/common" }
+
+[dependencies]
+common-game = { workspace = true }
+StargazersPlanet = { path = "./StargazersPlanet" }

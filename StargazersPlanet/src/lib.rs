@@ -1,15 +1,53 @@
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use common_game::components::planet::{Planet, PlanetAI, PlanetState, PlanetType};
-use common_game::components::resource::{BasicResourceType, ComplexResourceType, Combinator, Generator, BasicResource, ComplexResourceRequest, ComplexResource};
+use common_game::components::resource::{BasicResourceType, ComplexResourceType, Combinator, Generator, BasicResource, ComplexResourceRequest, ComplexResource, ResourceType};
 use common_game::components::rocket::Rocket;
 use common_game::protocols::messages;
-use common_game::logging;
+use common_game::logging::{LogEvent, ActorType, EventType, Channel, Payload};
 use log::{info, warn, error, debug};
 
 // Group-defined AI struct
 struct AI {
     started: bool,
     stopped: bool,
+}
+
+impl AI {
+    fn log_resource_generation(
+        explorer_id: u32,
+        planet_id: u32,
+        resource_type: BasicResourceType,
+        success: bool,
+        amount: Option<u32>,
+        error_msg: Option<String>,
+    ) {
+        let mut payload = Payload::new();
+        payload.insert("action".to_string(), "generate_resource".to_string());
+        match resource_type {
+            BasicResourceType::Oxygen =>  payload.insert("resource_type".to_string(), "Oxygen".to_string()),
+            BasicResourceType::Hydrogen =>  payload.insert("resource_type".to_string(), "Hydrogen".to_string()),
+            BasicResourceType::Carbon =>  payload.insert("resource_type".to_string(), "Carbon".to_string()),
+            BasicResourceType::Silicon =>  payload.insert("resource_type".to_string(), "Silicon".to_string())
+        };
+        payload.insert("status".to_string(), if success { "success" } else { "failed" }.to_string());
+
+        if let Some(amt) = amount {
+            payload.insert("amount".to_string(), amt.to_string());
+        }
+        if let Some(err) = error_msg {
+            payload.insert("error".to_string(), err);
+        }
+
+        LogEvent::new(
+            ActorType::Explorer,
+            explorer_id,
+            ActorType::Planet,
+            planet_id.to_string(),
+            EventType::InternalPlanetAction,
+            if success { Channel::Info } else { Channel::Warning },
+            payload,
+        ).emit();
+    }
 }
 
 impl PlanetAI for AI {
@@ -68,12 +106,38 @@ impl PlanetAI for AI {
     ) -> Option<messages::PlanetToExplorer> {
         match msg {
             // This variant is used to ask the Planet for the available [BasicResourceType]
-            messages::ExplorerToPlanet::SupportedResourceRequest { explorer_id: _ } => {
+            messages::ExplorerToPlanet::SupportedResourceRequest { explorer_id } => {
+                // Log incoming request
+                let mut payload = Payload::new();
+                payload.insert("action".to_string(), "supported_resource_request".to_string());
+                LogEvent::new(
+                    ActorType::Explorer,
+                    explorer_id,
+                    ActorType::Planet,
+                    state.id().to_string(),
+                    EventType::MessageExplorerToPlanet,
+                    Channel::Debug,
+                    payload,
+                ).emit();
+
                 Some(messages::PlanetToExplorer::SupportedResourceResponse { resource_list: generator.all_available_recipes() })
             },
 
             // This variant is used to ask the Planet for the available [ComplexResourceType]
-            messages::ExplorerToPlanet::SupportedCombinationRequest { explorer_id: _ } => {
+            messages::ExplorerToPlanet::SupportedCombinationRequest { explorer_id } => {
+                // Log incoming request
+                let mut payload = Payload::new();
+                payload.insert("action".to_string(), "supported_combination_request".to_string());
+                LogEvent::new(
+                    ActorType::Explorer,
+                    explorer_id,
+                    ActorType::Planet,
+                    state.id().to_string(),
+                    EventType::MessageExplorerToPlanet,
+                    Channel::Debug,
+                    payload,
+                ).emit();
+
                 Some(messages::PlanetToExplorer::SupportedCombinationResponse { combination_list: combinator.all_available_recipes() })
             },
 
@@ -83,7 +147,7 @@ impl PlanetAI for AI {
             //  - Some(GenerateResourceResponse { resource: None }) => the planet could generate the resource, but generation failed
             //  - Some(GenerateResourceResponse { resource: Some(requested_resource) }) => the planet successfully generated the resource
             // Explorer is expected to handle said outcomes.
-            messages::ExplorerToPlanet::GenerateResourceRequest { explorer_id: _ , resource } => {
+            messages::ExplorerToPlanet::GenerateResourceRequest { explorer_id , resource } => {
                 // Checking with planet state if charged cell is available
                 if let Some((charged_cell, _)) = state.full_cell() {
                     // Matching generation with requested type
@@ -91,11 +155,13 @@ impl PlanetAI for AI {
                         BasicResourceType::Oxygen => {
                             match generator.make_oxygen(charged_cell) {
                                 Ok(oxygen) => {
-                                    // TODO: Log successful resource creation
+                                    // Log successful resource creation
+                                    AI::log_resource_generation(explorer_id, state.id(), resource, true, Some(1), None);
                                     Some(messages::PlanetToExplorer::GenerateResourceResponse { resource: Some(BasicResource::Oxygen(oxygen)) })
                                 }
                                 Err(msg) => {
-                                    // TODO: Log unsuccessful resource creation & show msg
+                                    // Log unsuccessful resource creation & show msg
+                                    AI::log_resource_generation(explorer_id, state.id(), resource, false, None, Some(msg.to_string()));
                                     Some(messages::PlanetToExplorer::GenerateResourceResponse { resource: None })
                                 }
                             }
@@ -103,11 +169,13 @@ impl PlanetAI for AI {
                         BasicResourceType::Carbon => {
                             match generator.make_carbon(charged_cell) {
                                 Ok(carbon) => {
-                                    // TODO: Log successful resource creation
+                                    // Log successful resource creation
+                                    AI::log_resource_generation(explorer_id, state.id(), resource, true, Some(1), None);
                                     Some(messages::PlanetToExplorer::GenerateResourceResponse { resource: Some(BasicResource::Carbon(carbon)) })
                                 }
                                 Err(msg) => {
-                                    // TODO: Log unsuccessful resource creation & show msg
+                                    // Log unsuccessful resource creation & show msg
+                                    AI::log_resource_generation(explorer_id, state.id(), resource, false, None, Some(msg.to_string()));
                                     Some(messages::PlanetToExplorer::GenerateResourceResponse { resource: None })
                                 }
                             }
@@ -115,11 +183,13 @@ impl PlanetAI for AI {
                         BasicResourceType::Hydrogen => {
                             match generator.make_hydrogen(charged_cell) {
                                 Ok(hydrogen) => {
-                                    // TODO: Log successful resource creation
+                                    // Log successful resource creation
+                                    AI::log_resource_generation(explorer_id, state.id(), resource, true, Some(1), None);
                                     Some(messages::PlanetToExplorer::GenerateResourceResponse { resource: Some(BasicResource::Hydrogen(hydrogen)) })
                                 }
                                 Err(msg) => {
-                                    // TODO: Log unsuccessful resource creation & show msg
+                                    // Log unsuccessful resource creation & show msg
+                                    AI::log_resource_generation(explorer_id, state.id(), resource, false, None, Some(msg.to_string()));
                                     Some(messages::PlanetToExplorer::GenerateResourceResponse { resource: None })
                                 }
                             }
@@ -127,18 +197,40 @@ impl PlanetAI for AI {
                         BasicResourceType::Silicon => {
                             match generator.make_silicon(charged_cell) {
                                 Ok(silicon) => {
-                                    // TODO: Log successful resource creation
+                                    // Log successful resource creation
+                                    AI::log_resource_generation(explorer_id, state.id(), resource, true, Some(1), None);
                                     Some(messages::PlanetToExplorer::GenerateResourceResponse { resource: Some(BasicResource::Silicon(silicon)) })
                                 }
                                 Err(msg) => {
-                                    // TODO: Log unsuccessful resource creation & show msg
+                                    // Log unsuccessful resource creation & show msg
+                                    AI::log_resource_generation(explorer_id, state.id(), resource, false, None, Some(msg.to_string()));
                                     Some(messages::PlanetToExplorer::GenerateResourceResponse { resource: None })
                                 }
                             }
                         },
                     }
                 } else {
-                    // TODO: Log failed request as no charges available
+                    // Log failed request as no charges available
+                    let mut payload = Payload::new();
+                    payload.insert("action".to_string(), "generate_resource".to_string());
+                    match resource {
+                        BasicResourceType::Oxygen =>  payload.insert("resource_type".to_string(), "Oxygen".to_string()),
+                        BasicResourceType::Hydrogen =>  payload.insert("resource_type".to_string(), "Hydrogen".to_string()),
+                        BasicResourceType::Carbon =>  payload.insert("resource_type".to_string(), "Carbon".to_string()),
+                        BasicResourceType::Silicon =>  payload.insert("resource_type".to_string(), "Silicon".to_string())
+                    };
+                    payload.insert("status".to_string(), "rejected".to_string());
+                    payload.insert("reason".to_string(), "no_charged_cells".to_string());
+                    LogEvent::new(
+                        ActorType::Explorer,
+                        explorer_id,
+                        ActorType::Planet,
+                        state.id().to_string(),
+                        EventType::InternalPlanetAction,
+                        Channel::Warning,
+                        payload,
+                    ).emit();
+
                     None
                 }
             },
@@ -149,7 +241,7 @@ impl PlanetAI for AI {
             //  - Some(CombineResourceResponse { complex_response: Err((err_msg, r1, r2)) }) => the planet couldn't create the resource
             //  - Some(CombineResourceResponse { complex_response: Ok(requested_resource) }) => the planet successfully create the resource
             // Explorer is expected to handle said outcomes.
-            messages::ExplorerToPlanet::CombineResourceRequest { explorer_id: _ , msg } => {
+            messages::ExplorerToPlanet::CombineResourceRequest { explorer_id , msg } => {
                 // Parsing [ComplexResourceRequest] into a [ComplexResourceType] and [GenericResource]s
                 let (r_type, r1, r2) = match msg {
                     ComplexResourceRequest::Robot(r1, r2) => {
@@ -188,19 +280,51 @@ impl PlanetAI for AI {
 
                             match combinator.make_robot(silicon, life, charged_cell) {
                                 Ok(robot) => {
-                                    // TODO: Log successful resource creation
+                                    // Log successful resource creation
+                                    let mut payload = Payload::new();
+                                    payload.insert("action".to_string(), "combine_resource".to_string());
+                                    payload.insert("resource_type".to_string(), "Robot".to_string());
+                                    payload.insert("status".to_string(), "success".to_string());
+                                    payload.insert("input_1".to_string(), "Silicon".to_string());
+                                    payload.insert("input_2".to_string(), "Life".to_string());
+                                    LogEvent::new(
+                                        ActorType::Explorer,
+                                        explorer_id,
+                                        ActorType::Planet,
+                                        state.id().to_string(),
+                                        EventType::InternalPlanetAction,
+                                        Channel::Info,
+                                        payload,
+                                    ).emit();
+
                                     Some(messages::PlanetToExplorer::CombineResourceResponse {
                                         complex_response: Ok(ComplexResource::Robot(robot))
                                     })
                                 },
                                 Err((msg, r1, r2)) => {
-                                    // TODO: Log failed resource creation
+                                    // Log failed resource creation
+                                    let mut payload = Payload::new();
+                                    payload.insert("action".to_string(), "combine_resource".to_string());
+                                    payload.insert("resource_type".to_string(), "Robot".to_string());
+                                    payload.insert("status".to_string(), "failed".to_string());
+                                    payload.insert("error".to_string(), msg.clone());
+                                    payload.insert("input_1".to_string(), "Silicon".to_string());
+                                    payload.insert("input_2".to_string(), "Life".to_string());
+                                    LogEvent::new(
+                                        ActorType::Explorer,
+                                        explorer_id,
+                                        ActorType::Planet,
+                                        state.id().to_string(),
+                                        EventType::InternalPlanetAction,
+                                        Channel::Warning,
+                                        payload,
+                                    ).emit();
+
                                     Some(messages::PlanetToExplorer::CombineResourceResponse { complex_response: Err((msg, r1.to_generic(), r2.to_generic())) })
                                 }
                             }
                         }
                         _ => {
-                            // TODO: Log failed request as recipe not exists
                             let msg = match r_type {
                                 ComplexResourceType::Diamond => "Recipe not available, failed combination - returning [r1 : Carbon] and [r2 : Carbon]".to_string(),
                                 ComplexResourceType::Water => "Recipe not available, failed combination - returning [r1 : Hydrogen] and [r2 : Oxygen]".to_string(),
@@ -209,11 +333,28 @@ impl PlanetAI for AI {
                                 ComplexResourceType::AIPartner => "Recipe not available, failed combination - returning [r1 : Robot] and [r2 : Diamond]".to_string(),
                                 _ => "Pretty strange behaviour... Shouldn't be possible to be here, but here we are...".to_string()
                             };
+
+                            // Log failed request as recipe not exists
+                            let mut payload = Payload::new();
+                            payload.insert("action".to_string(), "combine_resource".to_string());
+                            payload.insert("resource_type".to_string(), format!("{:?}", r_type));
+                            payload.insert("status".to_string(), "rejected".to_string());
+                            payload.insert("reason".to_string(), "recipe_not_available".to_string());
+                            payload.insert("error".to_string(), msg.clone());
+                            LogEvent::new(
+                                ActorType::Explorer,
+                                explorer_id,
+                                ActorType::Planet,
+                                state.id().to_string(),
+                                EventType::InternalPlanetAction,
+                                Channel::Warning,
+                                payload,
+                            ).emit();
+
                             Some(messages::PlanetToExplorer::CombineResourceResponse { complex_response: Err((msg, r1, r2)) })
                         }
                     }
                 } else {
-                    // TODO: Log failed request as no charges available
                     let msg = match r_type {
                         ComplexResourceType::Diamond => "No charged cell, failed combination - returning [r1 : Carbon] and [r2 : Carbon]".to_string(),
                         ComplexResourceType::Water => "No charged cell, failed combination - returning [r1 : Hydrogen] and [r2 : Oxygen]".to_string(),
@@ -222,12 +363,44 @@ impl PlanetAI for AI {
                         ComplexResourceType::Dolphin => "No charged cell, failed combination - returning [r1 : Water] and [r2 : Life]".to_string(),
                         ComplexResourceType::AIPartner => "No charged cell, failed combination - returning [r1 : Robot] and [r2 : Diamond]".to_string()
                     };
+
+                    // Log failed request as no charges available
+                    let mut payload = Payload::new();
+                    payload.insert("action".to_string(), "combine_resource".to_string());
+                    payload.insert("resource_type".to_string(), format!("{:?}", r_type));
+                    payload.insert("status".to_string(), "rejected".to_string());
+                    payload.insert("reason".to_string(), "no_charged_cells".to_string());
+                    payload.insert("error".to_string(), msg.clone());
+                    LogEvent::new(
+                        ActorType::Explorer,
+                        explorer_id,
+                        ActorType::Planet,
+                        state.id().to_string(),
+                        EventType::InternalPlanetAction,
+                        Channel::Warning,
+                        payload,
+                    ).emit();
+
                     Some(messages::PlanetToExplorer::CombineResourceResponse { complex_response: Err((msg, r1, r2)) })
                 }
             },
 
             // This variant is used to ask the Planet for the available energy_cells number
-            messages::ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id: _ } => {
+            messages::ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id } => {
+                // Log incoming energy cell availability request
+                let mut payload = Payload::new();
+                payload.insert("action".to_string(), "available_energy_cell_request".to_string());
+                payload.insert("available_cells".to_string(), state.cells_count().to_string());
+                LogEvent::new(
+                    ActorType::Explorer,
+                    explorer_id,
+                    ActorType::Planet,
+                    state.id().to_string(),
+                    EventType::MessageExplorerToPlanet,
+                    Channel::Debug,
+                    payload,
+                ).emit();
+
                 Some(messages::PlanetToExplorer::AvailableEnergyCellResponse { available_cells: state.cells_count() as u32 })
             }
         }

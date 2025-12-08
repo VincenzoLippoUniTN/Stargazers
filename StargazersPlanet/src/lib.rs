@@ -1,9 +1,10 @@
-use std::sync::mpsc;
+use crossbeam_channel::{Sender, Receiver, unbounded};
 use common_game::components::planet::{Planet, PlanetAI, PlanetState, PlanetType};
 use common_game::components::resource::{BasicResourceType, ComplexResourceType, Combinator, Generator, BasicResource, ComplexResourceRequest, ComplexResource};
 use common_game::components::rocket::Rocket;
 use common_game::protocols::messages;
-use log::{ info, warn,error,debug};
+use common_game::logging;
+use log::{info, warn, error, debug};
 
 // Group-defined AI struct
 struct AI {
@@ -25,7 +26,6 @@ impl PlanetAI for AI {
                 state.charge_cell(s);
                 info!("Planet {}: Cell charged", state.id());
                 Some(messages::PlanetToOrchestrator::SunrayAck { planet_id: state.id() })
-
             }
 
             messages::OrchestratorToPlanet::InternalStateRequest => {
@@ -46,34 +46,16 @@ impl PlanetAI for AI {
             }
 
             messages::OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id: _explorer_id } => {
-                info!("Planet {} receive the Outgoing Explorer request from the Orchestrator",state.id());
                 Some(messages::PlanetToOrchestrator::OutgoingExplorerResponse {
                     planet_id: state.id(),
                     res: Ok(()),
                 })
             }
 
-            _ => None,
+            // TODO: To implement
+            messages::OrchestratorToPlanet::KillPlanet => None,
 
-            /*
-            messages::OrchestratorToPlanet::Asteroid(_) => {
-                if let Some(_) = self.handle_asteroid(state, generator, combinator) {
-                    Some(messages::PlanetToOrchestrator::AsteroidAck { planet_id: state.id(), destroyed: false })
-                } else {
-                    Some(messages::PlanetToOrchestrator::AsteroidAck { planet_id: state.id(), destroyed: true })
-                }
-            },
-
-            messages::OrchestratorToPlanet::StartPlanetAI => {
-                self.start(state);
-                Some(messages::PlanetToOrchestrator::StartPlanetAIResult { planet_id: state.id() })
-            },
-
-            messages::OrchestratorToPlanet::StopPlanetAI => {
-                self.stop(state);
-                Some(messages::PlanetToOrchestrator::StopPlanetAIResult { planet_id: state.id() })
-            }
-             */
+            _ => None
         }
     }
 
@@ -299,9 +281,9 @@ impl PlanetAI for AI {
 // This is the group's "export" function. It will be called by
 // the orchestrator to spawn your planet.
 pub fn create_planet(
-    rx_orchestrator: mpsc::Receiver<messages::OrchestratorToPlanet>,
-    tx_orchestrator: mpsc::Sender<messages::PlanetToOrchestrator>,
-    rx_explorer: mpsc::Receiver<messages::ExplorerToPlanet>
+    rx_orchestrator: Receiver<messages::OrchestratorToPlanet>,
+    tx_orchestrator: Sender<messages::PlanetToOrchestrator>,
+    rx_explorer: Receiver<messages::ExplorerToPlanet>
 ) -> Planet {
     let id = 1;
     let ai = AI {
@@ -344,9 +326,9 @@ pub fn create_planet(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
+    use crossbeam_channel::{Sender, Receiver, unbounded};
 
     use common_game::components::asteroid::Asteroid;
     use common_game::components::sunray::Sunray;
@@ -356,25 +338,13 @@ mod tests {
 
     // --- Helper for creating dummy channels ---
     // Returns the halves required by Planet::new
-    type PlanetOrchHalfChannels = (
-        mpsc::Receiver<OrchestratorToPlanet>,
-        mpsc::Sender<PlanetToOrchestrator>,
-    );
+    type PlanetOrchHalfChannels = (Receiver<OrchestratorToPlanet>, Sender<PlanetToOrchestrator>);
 
-    type PlanetExplHalfChannels = (
-        mpsc::Receiver<ExplorerToPlanet>,
-        mpsc::Sender<PlanetToExplorer>,
-    );
+    type PlanetExplHalfChannels = (Receiver<ExplorerToPlanet>, Sender<PlanetToExplorer>);
 
-    type OrchPlanetHalfChannels = (
-        mpsc::Sender<OrchestratorToPlanet>,
-        mpsc::Receiver<PlanetToOrchestrator>,
-    );
+    type OrchPlanetHalfChannels = (Sender<OrchestratorToPlanet>, Receiver<PlanetToOrchestrator>);
 
-    type ExplPlanetHalfChannels = (
-        mpsc::Sender<ExplorerToPlanet>,
-        mpsc::Receiver<PlanetToExplorer>,
-    );
+    type ExplPlanetHalfChannels = (Sender<ExplorerToPlanet>, Receiver<PlanetToExplorer>);
 
     fn get_test_channels() -> (
         PlanetOrchHalfChannels,
@@ -383,25 +353,24 @@ mod tests {
         ExplPlanetHalfChannels,
     ) {
         // Channel 1: Orchestrator -> Planet
-        let (tx_orch_in, rx_orch_in) = mpsc::channel::<OrchestratorToPlanet>();
+        let (sen_OrcToPla, rec_OrcToPla) = unbounded::<OrchestratorToPlanet>();
         // Channel 2: Planet -> Orchestrator
-        let (tx_orch_out, rx_orch_out) = mpsc::channel::<PlanetToOrchestrator>();
+        let (sen_PlaToOrc, rec_PlaToOrc) = unbounded::<PlanetToOrchestrator>();
 
         // Channel 3: Explorer -> Planet
-        let (tx_expl_in, rx_expl_in) = mpsc::channel::<ExplorerToPlanet>();
+        let (sen_ExpToPla, rec_ExpToPla) = unbounded::<ExplorerToPlanet>();
         // Channel 4: Planet -> Explorer
-        let (tx_expl_out, rx_expl_out) = mpsc::channel::<PlanetToExplorer>();
+        let (sen_PlaToExp, rec_PlaToExp) = unbounded::<PlanetToExplorer>();
 
         (
-            (rx_orch_in, tx_orch_out),
-            (rx_expl_in, tx_expl_out),
-            (tx_orch_in, rx_orch_out),
-            (tx_expl_in, rx_expl_out),
+            (rec_OrcToPla, sen_PlaToOrc),
+            (rec_ExpToPla, sen_PlaToExp),
+            (sen_OrcToPla, rec_PlaToOrc),
+            (sen_ExpToPla, rec_PlaToExp)
         )
     }
 
     // --- Integration Tests: Constructor ---
-
     #[test]
     fn test_explorer_comms() {
         // 1. Setup Channels using the new helper
@@ -427,7 +396,7 @@ mod tests {
         // 4. Setup Local Explorer Channels (Simulating Explorer 101)
         // We create a dedicated channel for this specific explorer interaction
         let explorer_id = 101;
-        let (expl_tx_local, expl_rx_local) = mpsc::channel::<PlanetToExplorer>();
+        let (expl_tx_local, expl_rx_local) = unbounded::<PlanetToExplorer>();
 
         // 5. Send IncomingExplorerRequest (Orchestrator -> Planet)
         sen_OrcToPla
@@ -495,11 +464,16 @@ mod tests {
     #[test]
     fn test_1() {
         // --- Channel orchestrator ↔ planet ---
-        let (tx_to_planet, rx_from_orch) = mpsc::channel::<OrchestratorToPlanet>();
-        let (tx_from_planet, rx_to_orch) = mpsc::channel::<PlanetToOrchestrator>();
+        let (
+            (rec_OrcToPla, sen_PlaToOrc),
+            (rec_ExpToPla, sen_PlaToExp),
+            (sen_OrcToPla, rec_PlaToOrc),
+            (sen_ExpToPla, rec_PlaToExp)
+        ) = get_test_channels();
 
         // --- create the planet ---
-        let mut planet = create_planet(rx_from_orch, tx_from_planet, mpsc::channel().1);
+        //let mut planet = create_planet(rx_from_orch, tx_from_planet, );
+        let mut planet = create_planet(rec_OrcToPla, sen_PlaToOrc, rec_ExpToPla);
 
         // --- launch planet in a thread ---
         let handle = thread::spawn(move || {
@@ -509,9 +483,9 @@ mod tests {
         });
 
         // --- Start AI ---
-        tx_to_planet.send(OrchestratorToPlanet::StartPlanetAI).unwrap();
+        sen_OrcToPla.send(OrchestratorToPlanet::StartPlanetAI).unwrap();
         if let Ok(PlanetToOrchestrator::StartPlanetAIResult { planet_id }) =
-            rx_to_orch.recv_timeout(Duration::from_secs(2))
+            rec_PlaToOrc.recv_timeout(Duration::from_secs(2))
         {
             info!("Orchestrator: Planet {} started!", planet_id);
         } else {
@@ -519,9 +493,9 @@ mod tests {
         }
 
         // --- Send SUNRAY ---
-        tx_to_planet.send(OrchestratorToPlanet::Sunray(Sunray::default())).unwrap();
+        sen_OrcToPla.send(OrchestratorToPlanet::Sunray(Sunray::default())).unwrap();
         if let Ok(PlanetToOrchestrator::SunrayAck { planet_id }) =
-            rx_to_orch.recv_timeout(Duration::from_secs(2))
+            rec_PlaToOrc.recv_timeout(Duration::from_secs(2))
         {
             info!("Orchestrator: SunrayAck received from Planet {}", planet_id);
         } else {
@@ -530,15 +504,15 @@ mod tests {
 
         // --- Send ASTEROID ---
         info!("\nOrchestrator: Sending Asteroid...");
-        tx_to_planet.send(OrchestratorToPlanet::Asteroid(Asteroid::default())).unwrap();
+        sen_OrcToPla.send(OrchestratorToPlanet::Asteroid(Asteroid::default())).unwrap();
 
-        match rx_to_orch.recv_timeout(Duration::from_secs(2)) {
-            Ok(PlanetToOrchestrator::AsteroidAck { planet_id, destroyed}) => {
+        match rec_PlaToOrc.recv_timeout(Duration::from_secs(2)) {
+            Ok(PlanetToOrchestrator::AsteroidAck { planet_id, rocket}) => {
                 info!("Orchestrator: AsteroidAck received from Planet {}", planet_id);
-                if destroyed {
-                    info!("Orchestrator: Planet {} destroyed the asteroid.", planet_id);
-                } else {
+                if rocket.is_none() {
                     info!("Orchestrator: Planet {} did NOT destroyed the asteroid!", planet_id);
+                } else {
+                    info!("Orchestrator: Planet {} destroyed the asteroid.", planet_id);
                 }
             }
             Ok(_) => info!("Orchestrator: Unexpected message received"),
@@ -546,9 +520,9 @@ mod tests {
         }
 
         // --- Stop AI ---
-        tx_to_planet.send(OrchestratorToPlanet::StopPlanetAI).unwrap();
+        sen_OrcToPla.send(OrchestratorToPlanet::StopPlanetAI).unwrap();
         if let Ok(PlanetToOrchestrator::StopPlanetAIResult { planet_id }) =
-            rx_to_orch.recv_timeout(Duration::from_secs(2))
+            rec_PlaToOrc.recv_timeout(Duration::from_secs(2))
         {
             info!("Orchestrator: Planet {} stopped!", planet_id);
         } else {

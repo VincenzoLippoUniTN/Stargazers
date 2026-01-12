@@ -7,14 +7,17 @@ edition = "2024"
 members = ["StargazersPlanet"]
 
 [workspace.dependencies]
-common-game = { git = "https://github.com/unitn-ap-2025/common" }
+common-game = "2.0.0"
+#common-game = { git = "https://github.com/unitn-ap-2025/common", tag = "v2.0.0" }
 
 [dependencies]
 common-game = { workspace = true }
 the-compiler-strikes-back = { git = "https://github.com/TheCompilerStrikesBackAP2025/TheCompilerStrikesBack.git" }
-Planet = { git = "https://github.com/Houston-we-have-a-borrow/Planet" }
+huston = { package = "Planet", git = "https://github.com/Houston-we-have-a-borrow/Planet" }
 one-million-crabs = { git = "https://github.com/Advance-Programming-2025/One_million_crabs.git" }
 ara_kees = {git = "https://github.com/black-adidas-shoe-org/planet.git" }
 trip = { git = "https://github.com/Totally-Reliable-Imaginary-Planets/TRIP.git", branch = "main" }
 immutable_cosmic_borrow = { git = "https://github.com/ImmutableCosmicBorrow/planet.git" }
-#RustyCrab: MISSING
+rusty-crab-ap2025 = "2.0.0-beta.2"
+log = "0.4.29"
+crossbeam-channel = "0.5.15"

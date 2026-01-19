@@ -88,6 +88,7 @@ fn build_orchestrator() -> Result<Orchestrator, String>{
     let anon = Explorer::new("Anon".to_string());           // Creating Anon
     let eleanor = Explorer::new("Eleanor".to_string());     // Creating Eleanor
 
+    // TODO: Salvare i canali in orchestrator per inviare messaggi
     Ok(Orchestrator::new(forge, csb, hus, omc, bas, trp, icb, ryc, anon, eleanor))
 }
 

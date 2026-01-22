@@ -7,7 +7,7 @@ name = "Planet"
 version = "0.1.0"
 source = "git+https://github.com/Houston-we-have-a-borrow/Planet#6988b40ebca4ed9ec631435d58317f8acef334ab"
 dependencies = [
- "common-game 3.0.0",
+ "common-game",
  "crossbeam-channel",
 ]
 
@@ -17,7 +17,7 @@ version = "0.1.0"
 dependencies = [
  "Planet",
  "ara_kees",
- "common-game 3.0.0",
+ "common-game",
  "crossbeam-channel",
  "immutable_cosmic_borrow",
  "log",
@@ -31,7 +31,7 @@ dependencies = [
 name = "StargazersPlanet"
 version = "0.1.0"
 dependencies = [
- "common-game 3.0.0",
+ "common-game",
  "crossbeam-channel",
  "env_logger",
  "log",
@@ -110,7 +110,7 @@ name = "ara_kees"
 version = "0.1.0"
 source = "git+https://github.com/black-adidas-shoe-org/planet.git#f40b6f5a2c5d90e4b25976779b569aa23e087692"
 dependencies = [
- "common-game 3.0.0",
+ "common-game",
  "crossbeam-channel",
  "env_logger",
  "once_cell",
@@ -246,21 +246,6 @@ checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "common-game"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1d6009e12eeebcf2e91893fb174f92fe117c3c57703efdafe2a6862a04c0265"
-dependencies = [
- "crossbeam-channel",
- "enum-as-inner",
- "lazy_static",
- "log",
- "paste",
- "strum",
- "strum_macros",
 ]
 
 [[package]]
@@ -574,7 +559,7 @@ name = "immutable_cosmic_borrow"
 version = "2.0.0"
 source = "git+https://github.com/ImmutableCosmicBorrow/planet.git#3c4a89202acf97cfe0369c6b3abecb3b0cfffa31"
 dependencies = [
- "common-game 3.0.0",
+ "common-game",
  "crossbeam-channel",
  "rand",
 ]
@@ -695,7 +680,7 @@ name = "one-million-crabs"
 version = "0.1.0"
 source = "git+https://github.com/Advance-Programming-2025/One_million_crabs.git#340a3a47658bb1cf672b89c59300fd4d11c23424"
 dependencies = [
- "common-game 3.0.0",
+ "common-game",
  "crossbeam-channel",
  "env_logger",
  "flexi_logger",
@@ -911,7 +896,7 @@ checksum = "c9aa751e058b9ab4997792a25827c2f3e14386ddca6f192aeb8b3f26c101fad3"
 dependencies = [
  "chrono",
  "clap",
- "common-game 3.0.0",
+ "common-game",
  "config",
  "crossbeam-channel",
  "fern",
@@ -1038,9 +1023,9 @@ dependencies = [
 [[package]]
 name = "the-compiler-strikes-back"
 version = "0.1.0"
-source = "git+https://github.com/TheCompilerStrikesBackAP2025/TheCompilerStrikesBack.git#6b7371c0c603b6565086512ecd88f6a4f0b736e2"
+source = "git+https://github.com/TheCompilerStrikesBackAP2025/TheCompilerStrikesBack.git#68f6fff8f11ab27a520240eca3fd025d2d7fee00"
 dependencies = [
- "common-game 2.0.0",
+ "common-game",
  "crossbeam-channel",
  "env_logger",
  "log",
@@ -1111,7 +1096,7 @@ name = "trip"
 version = "0.6.0"
 source = "git+https://github.com/Totally-Reliable-Imaginary-Planets/TRIP.git?branch=main#344caf6b5f17b5ec85bd6f55f37b4813f9f3783c"
 dependencies = [
- "common-game 3.0.0",
+ "common-game",
  "crossbeam-channel",
  "log",
 ]
@@ -1407,6 +1392,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.15"
+version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94f63c051f4fe3c1509da62131a678643c5b6fbdc9273b2b79d4378ebda003d2"
+checksum = "dfcd145825aace48cff44a8844de64bf75feec3080e0aa5cdbde72961ae51a65"

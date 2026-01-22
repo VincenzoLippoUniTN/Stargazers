@@ -22,13 +22,24 @@ use immutable_cosmic_borrow::create_planet as new_icb;
 use rusty_crab_ap2025::planet::create_planet as new_ryc;
 // Other imports
 use log::error;
+use common_game::components::sunray::Sunray;
 
 
 struct Orchestrator {
     forge: Forge,
-    csb: Planet, hus: Planet, omc: Planet, bas: Planet, trp: Planet, icb: Planet, ryc: Planet,
-    anonymous: Explorer, eleanor: Explorer
+
+    csb_chan: PlanetChannels,
+    hus_chan: PlanetChannels,
+    omc_chan: PlanetChannels,
+    bas_chan: PlanetChannels,
+    trp_chan: PlanetChannels,
+    icb_chan: PlanetChannels,
+    ryc_chan: PlanetChannels,
+
+    anonymous: Explorer,
+    eleanor: Explorer,
 }
+
 
 //struct helper to manage the planet's channels
 struct PlanetChannels{
@@ -37,10 +48,30 @@ struct PlanetChannels{
 }
 
 impl Orchestrator {
-    fn new(forge: Forge,
-           csb: Planet, hus: Planet, omc: Planet, bas: Planet, trp: Planet, icb: Planet, ryc: Planet,
-           anonymous: Explorer, eleanor: Explorer) -> Orchestrator {
-        Orchestrator{forge, csb, hus, omc, bas, trp, icb, ryc, anonymous, eleanor}
+    fn new(
+        forge: Forge,
+        csb_chan: PlanetChannels,
+        hus_chan: PlanetChannels,
+        omc_chan: PlanetChannels,
+        bas_chan: PlanetChannels,
+        trp_chan: PlanetChannels,
+        icb_chan: PlanetChannels,
+        ryc_chan: PlanetChannels,
+        anonymous: Explorer,
+        eleanor: Explorer,
+    ) -> Orchestrator {
+        Orchestrator {
+            forge,
+            csb_chan,
+            hus_chan,
+            omc_chan,
+            bas_chan,
+            trp_chan,
+            icb_chan,
+            ryc_chan,
+            anonymous,
+            eleanor,
+        }
     }
 }
 
@@ -51,53 +82,108 @@ fn spawn_planet_thread(
         crossbeam_channel::Receiver<common_game::protocols::planet_explorer::ExplorerToPlanet>
 
     ) -> common_game::components::planet::Planet + Send + 'static,//no lifetime problem
-) -> (common_game::components::planet::Planet, PlanetChannels) {
-    let (tx_to_planet, rx_to_planet) = unbounded::<OrchestratorToPlanet>();//create an illimitate channel
+) -> (PlanetChannels) {
+    let (tx_to_planet, rx_to_planet) = unbounded::<OrchestratorToPlanet>();
     let (tx_from_planet, rx_from_planet) = unbounded::<PlanetToOrchestrator>();
-    let (tx_dummy, rx_dummy) = unbounded::<common_game::protocols::planet_explorer::ExplorerToPlanet>(); // placeholder per explorer
+    let (_tx_dummy, rx_dummy) = unbounded::<ExplorerToPlanet>();
 
-    // Creiamo il thread del pianeta
-    //1 planet hear orchestrator message
-    //2 planet responde to orchestrator
-    //placeholder for explorer's messages
-    let planet = create_fn(rx_to_planet, tx_from_planet.clone(), rx_dummy);
-    //send message and receive it
-    (planet, PlanetChannels { to_planet: tx_to_planet, from_planet: rx_from_planet })
+    let mut planet = create_fn(rx_to_planet, tx_from_planet.clone(), rx_dummy);
+
+    // 🔥 QUI È LA CHIAVE
+    thread::spawn(move || {
+        planet.run(); // oppure planet.start()
+    });
+
+    PlanetChannels {
+        to_planet: tx_to_planet,
+        from_planet: rx_from_planet,
+    }
 }
 
+fn build_orchestrator() -> Result<Orchestrator, String> {
+    let forge = Forge::new()?;
 
-fn build_orchestrator() -> Result<Orchestrator, String>{
+    let (csb_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_csb(rx, tx, rx_exp, 1) });
+    let (hus_chan) = spawn_planet_thread(|rx, tx, rx_exp| {
+        new_hus(rx, tx, rx_exp, 2, RocketStrategy::Safe, None).expect("Failed to create HUS")
+    });
+    let (omc_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_omc(rx, tx, rx_exp, 3).expect("Failed to create OMC") });
+    let (bas_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_bas(rx, tx, rx_exp, 4).expect("Failed to create BAS") });
+    let (trp_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_trp(5, rx, tx, rx_exp).expect("Failed to create TRP") });
+    let (icb_chan) = spawn_planet_thread(|rx, tx, rx_exp| {
+        new_icb(false, 1.0, 1.0, Duration::from_secs(60), Duration::from_secs(10), 6, (rx, tx), rx_exp).expect("Failed to create ICB")
+    });
+    let (ryc_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_ryc(rx, tx, rx_exp, 7) });
 
-    // TODO: Setup all the crossbeam channels (Orchestrator <-> Planet, Orchestrator <-> Explorer, Explorer <-> Planet)
+    let anon = Explorer::new("Anon".to_string());
+    let eleanor = Explorer::new("Eleanor".to_string());
 
-    let forge = Forge::new()?;  // Creating Forge
-    // These are the only functions of the forge struct
-    // let _ = forge.generate_asteroid();
-    // let _ = forge.generate_sunray();
-
-    // TODO: After setting up the channels, fill the functions below with the proper parameters
-    let (csb, csb_chan) = spawn_planet_thread(|rx, tx, rx_exp| {new_csb(rx, tx, rx_exp, 1)});        // Creating CompilerStrikesBack planet
-    let (hus, hus_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_hus(rx, tx, rx_exp, 2, RocketStrategy::Safe, None).expect("Failed to create HustonWeHaveABorrow planet") });
-    let (omc, omc_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_omc(rx, tx, rx_exp, 3,).expect("Failed to create OMC") });
-    let (bas, bas_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_bas(rx, tx, rx_exp, 4).expect("Failed to create BAS") });
-    let (trp, trp_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_trp(5, rx, tx, rx_exp).expect("Failed to create TRP") });
-    let (icb, icb_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_icb(false,1.0,1.0,Duration::from_secs(60),Duration::from_secs(10),6, (rx,tx), rx_exp).expect("Failed to create ICB") });
-    let (ryc, ryc_chan) = spawn_planet_thread(|rx, tx, rx_exp| { new_ryc(rx, tx, rx_exp, 7) });     // Creating RustyCrab planet
-
-    // TODO: Just a placeholder. We're going to change this stuff when we properly start working on explorers
-    let anon = Explorer::new("Anon".to_string());           // Creating Anon
-    let eleanor = Explorer::new("Eleanor".to_string());     // Creating Eleanor
-
-    // TODO: Salvare i canali in orchestrator per inviare messaggi
-    Ok(Orchestrator::new(forge, csb, hus, omc, bas, trp, icb, ryc, anon, eleanor))
+    Ok(Orchestrator::new(
+        forge,
+        csb_chan,
+        hus_chan,
+        omc_chan,
+        bas_chan,
+        trp_chan,
+        icb_chan,
+        ryc_chan,
+        anon, eleanor,
+    ))
 }
+
 
 fn run_orchestrator() {
-    let orchestrator : Orchestrator;
-    match build_orchestrator() {
-        Ok(orch) => { orchestrator = orch; },
-        Err(e) => { error!("Orchestrator creation failed - {}", e); return }
+
+    let orchestrator = match build_orchestrator() {
+        Ok(o) => o,
+        Err(e) => {
+            error!("Orchestrator creation failed - {}", e);
+            return;
+        }
+    };
+
+    let planets = vec![
+        ("CSB", &orchestrator.csb_chan),
+        ("HUS", &orchestrator.hus_chan),
+        ("OMC", &orchestrator.omc_chan),
+        ("BAS", &orchestrator.bas_chan),
+        ("TRP", &orchestrator.trp_chan),
+        ("ICB", &orchestrator.icb_chan),
+        ("RYC", &orchestrator.ryc_chan),
+    ];
+
+
+    // ============================
+    // TEST 1 — START AI
+    // ============================
+    for (name, chan) in &planets {
+        println!("Orchestrator → {} : StartPlanetAI", name);
+        let resp = chan.to_planet.send(OrchestratorToPlanet::StartPlanetAI);
+
+        println!("{:?}",resp);
+
+        match chan.from_planet.recv_timeout(Duration::from_secs(2)) {
+            Ok(msg) => {
+                if let Some(id) = msg.as_start_planet_ai_result() {
+                    println!("✅ {} AI started (planet_id={})", name, id);
+                } else {
+                    println!("⚠️ {} unexpected msg: {:?}", name, msg);
+                }
+            }
+            Err(_) => {
+                println!("❌ {} no StartPlanetAIResult received", name);
+            }
+        }
     }
 
-    // TODO: I don't know exactly what to do here, but we'll see going forward
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn orchestrator_full_flow() {
+        run_orchestrator();
+    }
 }

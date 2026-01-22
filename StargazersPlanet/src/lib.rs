@@ -16,6 +16,7 @@ struct AI {
 }
 
 impl AI {
+
     fn log_resource_generation(
         explorer_id: u32,
         planet_id: u32,
@@ -52,36 +53,6 @@ impl AI {
 }
 
 impl PlanetAI for AI {
-
-    /*
-    fn handle_orchestrator_msg(
-        &mut self,
-        state: &mut PlanetState,
-        _generator: &Generator,
-        _combinator: &Combinator,
-        msg: OrchestratorToPlanet
-    ) -> Option<PlanetToOrchestrator> {
-        match msg {
-            OrchestratorToPlanet::Sunray(s) => {
-                info!("Planet {} receive the Sunray from the Orchestrator",state.id());
-                state.charge_cell(s);
-                info!("Planet {}: Cell charged", state.id());
-                Some(PlanetToOrchestrator::SunrayAck { planet_id: state.id() })
-            }
-
-            OrchestratorToPlanet::InternalStateRequest => {
-                info!("Planet {} receive the request of information from the Orchestrator",state.id());
-                let dummy_state = state.to_dummy();
-                Some(PlanetToOrchestrator::InternalStateResponse {
-                    planet_id: state.id(),
-                    planet_state: dummy_state,
-                })
-            }
-
-            _ => None
-        }
-    }
-    */
 
     fn handle_sunray(&mut self, state: &mut PlanetState, _generator: &Generator, _combinator: &Combinator, sunray: Sunray) {
         info!("Planet {} receive the Sunray from the Orchestrator",state.id());
@@ -133,14 +104,6 @@ impl PlanetAI for AI {
     fn on_explorer_departure(&mut self, _state: &mut PlanetState, _generator: &Generator, _combinator: &Combinator, _explorer_id: ID) {
         //todo!()
     }
-
-    /*
-    fn start(&mut self, state: &PlanetState) {
-        info!("Planet {}: AI started!", state.id());
-        self.started = true;
-        self.stopped = false;
-    }
-    */
 
     fn on_start(&mut self, state: &PlanetState, _generator: &Generator, _combinator: &Combinator) {
         info!("Planet {}: AI started!", state.id());

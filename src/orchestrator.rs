@@ -89,7 +89,6 @@ fn spawn_planet_thread(
 
     let mut planet = create_fn(rx_to_planet, tx_from_planet.clone(), rx_dummy);
 
-    // 🔥 QUI È LA CHIAVE
     thread::spawn(move || {
         planet.run(); // oppure planet.start()
     });

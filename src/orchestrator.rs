@@ -1,11 +1,10 @@
+use std::collections::HashSet;
 // Loading "common-game" imports
 use common_game::components::forge::Forge;
-use common_game::components::planet::Planet;
 use common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
 use common_game::protocols::planet_explorer::ExplorerToPlanet;
 use crossbeam_channel::unbounded;
-use immutable_cosmic_borrow::Ai as IcbAI;
 use std::thread;
 use std::time::Duration;
 // Loading explorers and giving them an alias
@@ -15,14 +14,12 @@ use the_compiler_strikes_back::planet::create_planet as new_csb;
 use huston::{houston_we_have_a_borrow as new_hus, RocketStrategy};
 use one_million_crabs::planet::create_planet as new_omc;
 use ara_kees::planet::create_planet as new_bas;
-use common_game::components::resource::BasicResourceType;
 use common_game::logging::{ActorType, Channel, EventType, LogEvent, Participant, Payload};
 use trip::trip as new_trp;
 use immutable_cosmic_borrow::create_planet as new_icb;
 use rusty_crab_ap2025::planet::create_planet as new_ryc;
 // Other imports
 use log::error;
-use common_game::components::sunray::Sunray;
 
 
 struct Orchestrator {
@@ -133,6 +130,8 @@ fn build_orchestrator() -> Result<Orchestrator, String> {
 
 fn run_orchestrator() {
 
+    let mut dead_planets: HashSet<&str> = HashSet::new();
+
     let orchestrator = match build_orchestrator() {
         Ok(o) => o,
         Err(e) => {
@@ -180,21 +179,170 @@ fn run_orchestrator() {
     // ============================
     for (name, chan) in &planets {
         println!("Orchestrator → {} : InternalStateRequest", name);
-        let resp = chan.to_planet.send(OrchestratorToPlanet::InternalStateRequest);
+        let _ = chan.to_planet.send(OrchestratorToPlanet::InternalStateRequest);
 
         match chan.from_planet.recv_timeout(Duration::from_secs(2)) {
-            Ok(PlanetToOrchestrator::InternalStateResponse { planet_id, planet_state }) => {
-                println!("✅ {} state received (id={})", name, planet_id);
-                println!("   DummyPlanetState: {:?}", planet_state);
+            Ok(msg) => match msg {
+                PlanetToOrchestrator::InternalStateResponse { planet_id, planet_state } => {
+                    println!("✅ {} state received (id={})", name, planet_id);
+                    println!("   DummyPlanetState: {:?}", planet_state);
+                }
+                PlanetToOrchestrator::Stopped { planet_id } => {
+                    println!("⚠️ {} is stopped (planet_id={})", name, planet_id);
+                }
+                other => {
+                    println!("⚠️ {} unexpected msg {:?}", name, other);
+                }
+            },
+            Err(_) => {
+                println!("❌ {} no response received", name);
+            }
+        }
+    }
+
+    // ============================
+    // TEST 3 — STOP AI
+    // ============================
+    for (name, chan) in &planets {
+        println!("Orchestrator → {} : StopPlanetAI", name);
+        let _ = chan.to_planet.send(OrchestratorToPlanet::StopPlanetAI);
+
+        match chan.from_planet.recv_timeout(Duration::from_secs(2)) {
+            Ok(msg) => match msg {
+                PlanetToOrchestrator::Stopped { planet_id }
+                | PlanetToOrchestrator::StopPlanetAIResult { planet_id } => { // <-- aggiunto
+                    println!("🛑 {} AI stopped (planet_id={})", name, planet_id);
+                }
+                other => {
+                    println!("⚠️ {} unexpected msg {:?}", name, other);
+                }
+            },
+            Err(_) => {
+                println!("❌ {} no StopPlanetAIResult received", name);
+            }
+        }
+    }
+
+    // ============================
+    // TEST 4 — START AI
+    // ============================
+    for (name, chan) in &planets {
+        println!("Orchestrator → {} : StartPlanetAI", name);
+        let resp = chan.to_planet.send(OrchestratorToPlanet::StartPlanetAI);
+
+        //println!("{:?}",resp);
+
+        match chan.from_planet.recv_timeout(Duration::from_secs(2)) {
+            Ok(msg) => {
+                if let Some(id) = msg.as_start_planet_ai_result() {
+                    println!("✅ {} AI started (planet_id={})", name, id);
+                } else {
+                    println!("⚠️ {} unexpected msg: {:?}", name, msg);
+                }
+            }
+            Err(_) => {
+                println!("❌ {} no StartPlanetAIResult received", name);
+            }
+        }
+    }
+
+    // ============================
+    // TEST 3 — SUNRAY
+    // ============================
+    for (name, chan) in &planets {
+        let sunray = orchestrator.forge.generate_sunray();
+        println!("Orchestrator → {} : Sunray", name);
+        let resp = chan.to_planet.send(OrchestratorToPlanet::Sunray(sunray));
+        println!("{:?}",resp);
+
+        match chan.from_planet.recv_timeout(Duration::from_secs(2)) {
+            Ok(PlanetToOrchestrator::SunrayAck { planet_id }) => {
+                println!("✅ {} acknowledged Sunray (planet_id={})", name, planet_id);
             }
             Ok(other) => {
                 println!("⚠️ {} unexpected msg {:?}", name, other);
             }
             Err(_) => {
-                println!("❌ {} no state response", name);
+                println!("❌ {} no SunrayAck received", name);
             }
         }
     }
+
+    // ============================
+    // TEST 4 — ASTEROID
+    // ============================
+    for (name, chan) in &planets {
+        if dead_planets.contains(name) {
+            println!("⚠️ {} is dead, skipping message", name);
+            continue;
+        }
+        let asteroid = orchestrator.forge.generate_asteroid();
+        println!("Orchestrator → {} : Asteroid", name);
+        let _ = chan.to_planet.send(OrchestratorToPlanet::Asteroid(asteroid));
+
+        match chan.from_planet.recv_timeout(Duration::from_secs(2)) {
+            Ok(PlanetToOrchestrator::AsteroidAck { planet_id, rocket }) => {
+                match rocket {
+                    Some(_) => {
+                        println!("✅ {} built a rocket and survived asteroid (planet_id={})", name, planet_id)
+                    }
+                    None => {
+                        println!("💀 {} could not build a rocket, stopping AI and killing planet (planet_id={})", name, planet_id);
+
+                        // Poi invia KillPlanet
+                        let _ = chan.to_planet.send(OrchestratorToPlanet::KillPlanet);
+
+                        // Attende il risultato del kill
+                        match chan.from_planet.recv_timeout(Duration::from_secs(2)) {
+                            Ok(PlanetToOrchestrator::KillPlanetResult { planet_id }) => {
+                                println!("✅ {} planet AI killed (planet_id={})", name, planet_id);
+                                dead_planets.insert(*name);
+                            }
+                            Ok(other) => {
+                                println!("⚠️ {} unexpected msg after KillPlanet: {:?}", name, other);
+                            }
+                            Err(_) => {
+                                println!("❌ {} no KillPlanetResult received", name);
+                            }
+                        }
+
+                        // Ferma l'AI del pianeta
+                        let _ = chan.to_planet.send(OrchestratorToPlanet::StopPlanetAI);
+
+                        // Chiude il canale verso il pianeta
+                        drop(chan.to_planet.clone());
+                        drop(chan.from_planet.clone());
+                        println!("🗑️ {} channels closed", name);
+                    }
+                }
+            }
+            Ok(PlanetToOrchestrator::Stopped { planet_id }) => {
+                println!("💀 {} was already stopped/destroyed (planet_id={})", name, planet_id);
+            }
+            Ok(other) => {
+                println!("⚠️ {} unexpected msg {:?}", name, other);
+            }
+            Err(_) => {
+                println!("❌ {} no asteroid response received", name);
+            }
+        }
+    }
+
+    // ============================
+    // TEST 3 — SUNRAY
+    // ============================
+    for (name, chan) in &planets {
+        if dead_planets.contains(name) {
+            println!("⚠️ {} is dead, skipping Sunray", name);
+            continue;
+        }
+
+        let sunray = orchestrator.forge.generate_sunray();
+        println!("Orchestrator → {} : Sunray", name);
+        let _ = chan.to_planet.send(OrchestratorToPlanet::Sunray(sunray));
+    }
+
+
 
 }
 

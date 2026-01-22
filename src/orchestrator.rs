@@ -90,7 +90,7 @@ fn spawn_planet_thread(
     let mut planet = create_fn(rx_to_planet, tx_from_planet.clone(), rx_dummy);
 
     thread::spawn(move || {
-        planet.run(); // oppure planet.start()
+        planet.run();
     });
 
     PlanetChannels {
@@ -159,7 +159,7 @@ fn run_orchestrator() {
         println!("Orchestrator → {} : StartPlanetAI", name);
         let resp = chan.to_planet.send(OrchestratorToPlanet::StartPlanetAI);
 
-        println!("{:?}",resp);
+        //println!("{:?}",resp);
 
         match chan.from_planet.recv_timeout(Duration::from_secs(2)) {
             Ok(msg) => {
@@ -171,6 +171,27 @@ fn run_orchestrator() {
             }
             Err(_) => {
                 println!("❌ {} no StartPlanetAIResult received", name);
+            }
+        }
+    }
+
+    // ============================
+    // TEST 2 — INTERNAL STATE
+    // ============================
+    for (name, chan) in &planets {
+        println!("Orchestrator → {} : InternalStateRequest", name);
+        let resp = chan.to_planet.send(OrchestratorToPlanet::InternalStateRequest);
+
+        match chan.from_planet.recv_timeout(Duration::from_secs(2)) {
+            Ok(PlanetToOrchestrator::InternalStateResponse { planet_id, planet_state }) => {
+                println!("✅ {} state received (id={})", name, planet_id);
+                println!("   DummyPlanetState: {:?}", planet_state);
+            }
+            Ok(other) => {
+                println!("⚠️ {} unexpected msg {:?}", name, other);
+            }
+            Err(_) => {
+                println!("❌ {} no state response", name);
             }
         }
     }

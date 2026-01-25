@@ -8,7 +8,6 @@ members = ["StargazersPlanet"]
 
 [workspace.dependencies]
 common-game = "3.0.0"
-#common-game = { git = "https://github.com/unitn-ap-2025/common", tag = "v2.0.0" }
 
 [dependencies]
 common-game = { workspace = true }

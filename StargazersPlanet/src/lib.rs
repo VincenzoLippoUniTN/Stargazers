@@ -464,6 +464,50 @@ pub fn create_planet(
     }
 }
 
+// Same as above, with the possibility to input the id
+pub fn create_planet_with_id(
+    rx_orchestrator: Receiver<OrchestratorToPlanet>,
+    tx_orchestrator: Sender<PlanetToOrchestrator>,
+    rx_explorer: Receiver<ExplorerToPlanet>,
+    id: ID
+) -> Planet {
+    let ai = AI {
+        started: false,
+        stopped: false,
+    };
+    let gen_rules = vec![
+        BasicResourceType::Oxygen,
+        BasicResourceType::Carbon,
+        BasicResourceType::Hydrogen,
+        BasicResourceType::Silicon
+    ];
+    let comb_rules = vec![
+        ComplexResourceType::Robot,
+    ];
+
+    // Construct the planet and return it
+    match Planet::new(
+        id,
+        PlanetType::B,
+        Box::new(ai),
+        gen_rules,
+        comb_rules,
+        (rx_orchestrator, tx_orchestrator),
+        rx_explorer,
+    ) {
+        Ok(planet) => {
+            // TODO: Log planet creation success
+            info!("Planet {} created!", planet.id());
+            planet
+        }
+        Err(msg) => {
+            // TODO: Log planet creation failure
+            error!("Planet {} creation failed: {}", id, msg);
+            panic!("Planet {} created with error: {}", id, msg);
+        }
+    }
+}
+
 
 // =============================================================================
 // COMPREHENSIVE UNIT TESTS FOR PLANET AI (lib.rs)

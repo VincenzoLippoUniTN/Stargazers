@@ -1,10 +1,17 @@
 //! Player input: keyboard shortcuts, the mouse wheel, and the on-screen buttons.
-//! Both the keyboard and the buttons funnel into the same handful of actions.
+//!
+//! Actions split in two:
+//! - **View controls** (mode, focus, zoom, pause the animation) are purely
+//!   client-side and always act locally.
+//! - **Game operations** (sun ray, move explorer) represent real game actions. In
+//!   feed mode they're emitted as [`GalaxyCommand`]s for the simulation to carry
+//!   out; in demo mode (no [`CommandSink`]) they fall back to a local simulation.
 
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 use rand::prelude::*;
 
+use crate::command::{CommandSink, GalaxyCommand};
 use crate::domain::components::{Action, Btn, Explorer, Planet};
 use crate::domain::state::GameState;
 
@@ -24,6 +31,7 @@ fn handle_keyboard(
     mut state: ResMut<GameState>,
     mut explorers: Query<&mut Explorer>,
     mut planets: Query<&mut Planet>,
+    commands: Option<Res<CommandSink>>,
 ) {
     if keys.just_pressed(KeyCode::KeyP) {
         state.toggle_mode();
@@ -35,10 +43,10 @@ fn handle_keyboard(
         state.prev();
     }
     if keys.just_pressed(KeyCode::KeyE) {
-        move_explorer(&state, &mut explorers);
+        request_move_explorer(&state, &mut explorers, &commands);
     }
     if keys.just_pressed(KeyCode::KeyS) {
-        send_sunray(state.focus, &mut planets);
+        request_sunray(&state, &mut planets, &commands);
     }
     if keys.just_pressed(KeyCode::Space) {
         state.paused = !state.paused;
@@ -57,6 +65,7 @@ fn handle_buttons(
     mut state: ResMut<GameState>,
     mut explorers: Query<&mut Explorer>,
     mut planets: Query<&mut Planet>,
+    commands: Option<Res<CommandSink>>,
 ) {
     for (inter, btn) in &interaction {
         if *inter != Interaction::Pressed {
@@ -66,8 +75,8 @@ fn handle_buttons(
             Action::Mode => state.toggle_mode(),
             Action::Prev => state.prev(),
             Action::Next => state.next(),
-            Action::Move => move_explorer(&state, &mut explorers),
-            Action::Sunray => send_sunray(state.focus, &mut planets),
+            Action::Move => request_move_explorer(&state, &mut explorers, &commands),
+            Action::Sunray => request_sunray(&state, &mut planets, &commands),
             Action::Pause => state.paused = !state.paused,
             Action::ZoomIn => state.zoom(-5.0),
             Action::ZoomOut => state.zoom(5.0),
@@ -85,24 +94,68 @@ fn style_buttons(mut q: Query<(&Interaction, &mut BackgroundColor), With<Button>
     }
 }
 
-/// Sends the first idle explorer toward a random neighbouring planet.
-fn move_explorer(state: &GameState, explorers: &mut Query<&mut Explorer>) {
-    let mut rng = rand::thread_rng();
-    for mut ex in explorers.iter_mut() {
-        if ex.target.is_some() {
-            continue;
+/// Charge a cell on the focused planet: emit a command in feed mode, simulate
+/// locally in demo mode.
+fn request_sunray(
+    state: &GameState,
+    planets: &mut Query<&mut Planet>,
+    commands: &Option<Res<CommandSink>>,
+) {
+    if let Some(sink) = commands {
+        if let Some(&planet_id) = state.planet_ids.get(state.focus) {
+            sink.send(GalaxyCommand::Sunray { planet_id });
         }
-        let neighbors = state.neighbors(ex.at);
-        if neighbors.is_empty() {
-            continue;
-        }
-        ex.target = Some(neighbors[rng.gen_range(0..neighbors.len())]);
-        break;
+    } else {
+        charge_first_empty_cell(state.focus, planets);
     }
 }
 
-/// Charges the first empty cell of the focused planet.
-fn send_sunray(focus: usize, planets: &mut Query<&mut Planet>) {
+/// Send an idle explorer to a neighbouring planet: emit a command in feed mode,
+/// simulate locally in demo mode.
+fn request_move_explorer(
+    state: &GameState,
+    explorers: &mut Query<&mut Explorer>,
+    commands: &Option<Res<CommandSink>>,
+) {
+    let mut rng = rand::thread_rng();
+
+    match commands {
+        Some(sink) => {
+            for ex in explorers.iter() {
+                if ex.target.is_some() {
+                    continue;
+                }
+                let neighbors = state.neighbors(ex.at);
+                if neighbors.is_empty() {
+                    continue;
+                }
+                let target = neighbors[rng.gen_range(0..neighbors.len())];
+                if let Some(&to_planet) = state.planet_ids.get(target) {
+                    sink.send(GalaxyCommand::MoveExplorer {
+                        explorer_id: ex.id,
+                        to_planet,
+                    });
+                }
+                break;
+            }
+        }
+        None => {
+            for mut ex in explorers.iter_mut() {
+                if ex.target.is_some() {
+                    continue;
+                }
+                let neighbors = state.neighbors(ex.at);
+                if neighbors.is_empty() {
+                    continue;
+                }
+                ex.target = Some(neighbors[rng.gen_range(0..neighbors.len())]);
+                break;
+            }
+        }
+    }
+}
+
+fn charge_first_empty_cell(focus: usize, planets: &mut Query<&mut Planet>) {
     for mut p in planets.iter_mut() {
         if p.id != focus {
             continue;

@@ -5,6 +5,11 @@
 //! and receives a [`DummyPlanetState`]. This module turns that state into the
 //! visualizer's neutral [`GalaxySnapshot`] and pushes it through a channel.
 //!
+//! State flows *out* to the visualizer as snapshots. Manual operations flow back
+//! *in* as [`GalaxyCommand`]s: the visualizer emits an intent, the orchestrator
+//! drains it and runs it through the same code its AI uses, so a button press and
+//! an automatic action are one and the same. See `CONNECTING_THE_VISUALIZER.md`.
+//!
 //! Typical use:
 //!
 //! ```ignore
@@ -36,6 +41,9 @@ use common_game::utils::ID;
 
 use galaxy_visualizer_stargazers as viz;
 use viz::{ExplorerSnapshot, GalaxySender, GalaxySnapshot, PlanetKind, PlanetSnapshot};
+
+// Re-exported so the orchestrator can pull the whole visualizer surface from here.
+pub use viz::{command_channel, galaxy_channel, run_with_io, CommandSource, GalaxyCommand};
 
 /// Maps a `common-game` planet type to the visualizer's neutral kind.
 pub fn kind_of(planet_type: PlanetType) -> PlanetKind {

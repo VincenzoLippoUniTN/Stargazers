@@ -3,7 +3,8 @@
 //! The crate is organised as a small set of Bevy plugins layered on a plain data
 //! core:
 //!
-//! - [`mod@feed`] — the public data contract ([`GalaxySnapshot`] and friends).
+//! - [`mod@feed`] — the data contract *out* ([`GalaxySnapshot`] and friends).
+//! - [`mod@command`] — the contract *in* ([`GalaxyCommand`]) for manual operations.
 //! - `domain` — planet types, ECS components, world state and galaxy layout.
 //! - `scene` — builds the 3D world from a layout.
 //! - `sync` — reconciles the world with incoming snapshots.
@@ -11,10 +12,11 @@
 //! - `interaction` — keyboard, mouse and buttons.
 //! - `view` — camera and HUD.
 //!
-//! Use [`run`] for a self-contained random demo, or [`run_with_feed`] to drive the
-//! scene from live snapshots produced elsewhere (for example by the Stargazers
-//! orchestrator).
+//! Use [`run`] for a self-contained random demo, [`run_with_feed`] to drive the
+//! scene from live snapshots, or [`run_with_io`] to also let the UI send manual
+//! [`GalaxyCommand`]s back to the producer.
 
+mod command;
 mod domain;
 mod feed;
 mod interaction;
@@ -27,6 +29,7 @@ use bevy::prelude::*;
 
 use domain::state::{GameState, Source};
 
+pub use command::{command_channel, CommandSink, CommandSource, GalaxyCommand};
 pub use feed::{
     galaxy_channel, ExplorerSnapshot, GalaxyFeed, GalaxySender, GalaxySnapshot, PlanetKind,
     PlanetSnapshot,
@@ -75,7 +78,7 @@ impl Plugin for GalaxyVisualizerPlugin {
 
 /// Runs the visualizer as a self-contained demo with a random galaxy.
 pub fn run() {
-    build_app(None).run();
+    build_app(None, None).run();
 }
 
 /// Runs the visualizer driven by snapshots arriving on `feed`.
@@ -83,10 +86,16 @@ pub fn run() {
 /// Must be called from the main thread (a windowing requirement), so launch any
 /// data producer on a background thread first.
 pub fn run_with_feed(feed: GalaxyFeed) {
-    build_app(Some(feed)).run();
+    build_app(Some(feed), None).run();
 }
 
-fn build_app(feed: Option<GalaxyFeed>) -> App {
+/// Like [`run_with_feed`], but the UI also emits manual [`GalaxyCommand`]s through
+/// `commands` for the producer to act on.
+pub fn run_with_io(feed: GalaxyFeed, commands: CommandSink) {
+    build_app(Some(feed), Some(commands)).run();
+}
+
+fn build_app(feed: Option<GalaxyFeed>, commands: Option<CommandSink>) -> App {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -97,10 +106,16 @@ fn build_app(feed: Option<GalaxyFeed>) -> App {
         ..default()
     }));
 
+    // Insert the feed before the plugin so it can detect feed vs demo mode.
     if let Some(feed) = feed {
         app.insert_resource(feed);
     }
 
     app.add_plugins(GalaxyVisualizerPlugin);
+
+    if let Some(commands) = commands {
+        app.insert_resource(commands);
+    }
+
     app
 }

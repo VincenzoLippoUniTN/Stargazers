@@ -121,6 +121,80 @@ fn main() {
 The snippet above is illustrative — drop the `update_planet` + `publish` calls into
 whatever loop your orchestrator already runs to keep the picture live.
 
+## 3. Manual operations (the input channel)
+
+State flows *out* as snapshots; manual operations flow back *in* as commands. The
+visualizer only ever **emits an intent** — it never touches your planets. Your
+orchestrator drains those intents and runs them through the *same* code its AI
+uses, so a button press and an automatic action are one and the same. The result
+shows up on the next snapshot, keeping the orchestrator the single source of truth.
+
+Swap `run_with_feed` for `run_with_io` and pass it a command sink; keep the
+matching source on the orchestrator side:
+
+```rust
+use crate::visualizer::{command_channel, galaxy_channel, run_with_io, CommandSource, GalaxyCommand};
+
+let (sender, feed) = galaxy_channel();      // snapshots: orchestrator -> view
+let (sink, commands) = command_channel();   // commands:  view -> orchestrator
+
+std::thread::spawn(move || {
+    let mut bridge = VizBridge::new(sender);
+    // ...register planets, then your loop...
+    loop {
+        // 1. drain manual operations and run them like the AI would
+        for cmd in commands.drain() {
+            handle_command(&forge, &channels, cmd);
+        }
+        // 2. poll planets, update the bridge, publish (as in section 2)
+        // ...
+        if !bridge.publish() { break; }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+});
+
+run_with_io(feed, sink); // blocks until the window closes
+```
+
+`handle_command` is the bridge between an intent and a real `OrchestratorToPlanet`
+message — and the key point is that each arm calls the **same helper your AI
+calls**, so there's exactly one code path per operation:
+
+```rust
+fn handle_command(forge: &Forge, channels: &PlanetChannels, cmd: GalaxyCommand) {
+    match cmd {
+        GalaxyCommand::Sunray { planet_id } => {
+            // identical to the automatic sun ray your AI sends
+            let ray = forge.generate_sunray();
+            channels.of(planet_id).to_planet.send(OrchestratorToPlanet::Sunray(ray)).ok();
+        }
+        GalaxyCommand::Asteroid { planet_id } => {
+            let rock = forge.generate_asteroid();
+            channels.of(planet_id).to_planet.send(OrchestratorToPlanet::Asteroid(rock)).ok();
+        }
+        GalaxyCommand::SetAi { planet_id, running } => {
+            let msg = if running { OrchestratorToPlanet::StartPlanetAI }
+                      else       { OrchestratorToPlanet::StopPlanetAI };
+            channels.of(planet_id).to_planet.send(msg).ok();
+        }
+        GalaxyCommand::Kill { planet_id } => {
+            channels.of(planet_id).to_planet.send(OrchestratorToPlanet::KillPlanet).ok();
+        }
+        GalaxyCommand::MoveExplorer { explorer_id, to_planet } => {
+            // route your explorer here (IncomingExplorerRequest / OutgoingExplorerRequest)
+        }
+    }
+}
+```
+
+Today the UI's buttons emit `Sunray` (the "Sun ray" button / `S`) and
+`MoveExplorer` (the "Explorer" button / `E`); the other view buttons (mode, focus,
+zoom, pause) are client-side only and never reach you. The `GalaxyCommand` enum
+also carries `Asteroid`, `SetAi` and `Kill` for whatever buttons you add later.
+
+In demo mode (no command sink) those same buttons just animate locally, so the
+standalone demo keeps working without a backend.
+
 ## What the visualizer shows
 
 - **Planet kind** sets colour, size and rings. `register_planet` decides this.

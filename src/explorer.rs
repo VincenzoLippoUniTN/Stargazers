@@ -1,4 +1,4 @@
-pub struct Explorer {   
+pub struct Explorer {
     name: String
 }
 

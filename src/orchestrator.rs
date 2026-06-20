@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 // Loading "common-game" imports
+use crate::first_explorer::FirstExplorer;
 use common_game::components::forge::Forge;
 use common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
@@ -267,6 +268,60 @@ fn run_orchestrator() {
             }
         }
     }
+
+    // =========================================================================
+    // INIRIALIZE CHANNELS AND THREAD OF THE EXPLORER (Con FirstExplorer)
+    // =========================================================================
+
+    // configuration Explorer "Anon"
+    let (tx_to_anon, rx_to_anon) = unbounded::<OrchestratorToExplorer>();
+    let (tx_from_anon, rx_from_anon) = unbounded::<ExplorerToOrchestrator<()>>();
+    let explorer_anon = FirstExplorer::new("Anon".to_string());
+    thread::spawn(move || {
+        explorer_anon.run(rx_to_anon, tx_from_anon, 101);
+    });
+
+    // configuration Explorer "Eleanor"
+    let (tx_to_eleanor, rx_to_eleanor) = unbounded::<OrchestratorToExplorer>();
+    let (tx_from_eleanor, rx_from_eleanor) = unbounded::<ExplorerToOrchestrator<()>>();
+    let explorer_eleanor = FirstExplorer::new("Eleanor".to_string());
+    thread::spawn(move || {
+        explorer_eleanor.run(rx_to_eleanor, tx_from_eleanor, 102);
+    });
+    
+    //vector to iterate in the different explorer's channels
+    let explorers = vec![
+        ("Anon", &tx_to_anon, &rx_from_anon),
+        ("Eleanor", &tx_to_eleanor, &rx_from_eleanor),
+    ];
+
+    //FIRST EXPLORER TEST\\
+    println!("\n--- START TEST TRANSITION EXPLORER-ORCHESTRATOR ---");
+
+    for (name, tx_to_exp, rx_from_exp) in &explorers {
+
+        // 1. Send
+        println!("Orchestrator → Explorer ({}) : SupportedResourceRequest", name);
+        let _ = tx_to_exp.send(OrchestratorToExplorer::SupportedResourceRequest);
+
+        // Response
+        match rx_from_exp.recv_timeout(Duration::from_secs(2)) {
+            Ok(ExplorerToOrchestrator::SupportedResourceResult { explorer_id, supported_resources }) => {
+                println!(
+                    "✅ Received from {} (ID: {}): SupportedResourceResult. Resources on the planet: {:?}",
+                    name, explorer_id, supported_resources
+                );
+            }
+            Ok(other) => {
+                println!("⚠️ Message received {}: {:?}", name, other);
+            }
+            Err(_) => {
+                println!("❌ Error/Timeout: No response from Explorer {}", name);
+            }
+        }
+    }
+
+    println!("--- END TEST EXPLORER-ORCHESTRATOR ---\n");
 
     // ============================
     // TEST 4 — ASTEROID

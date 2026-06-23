@@ -34,7 +34,7 @@ use ara_kees::planet::create_planet as new_bas;
 use trip::trip as new_trp;
 use immutable_cosmic_borrow::create_planet as new_icb;
 use rusty_crab_ap2025::planet::create_planet as new_ryc;
-
+use crate::bag::BagSnapshot;
 // =========================================================================
 // STRUCTS
 // =========================================================================
@@ -107,7 +107,7 @@ fn spawn_planet_thread(
     let mut planet = create_fn(rx_to_planet, tx_from_planet.clone(), rx_exp);
 
     thread::spawn(move || {
-        planet.run();
+        planet.run(); // TODO: Manage planet initialization failure
     });
 
     PlanetChannels {
@@ -159,12 +159,12 @@ fn run_orchestrator() {
 
     // --- Prepare Explorer Channels ---
     let (tx_to_anon, rx_to_anon) = unbounded::<OrchestratorToExplorer>();
-    let (tx_from_anon, rx_from_anon) = unbounded::<ExplorerToOrchestrator<()>>();
+    let (tx_from_anon, rx_from_anon) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
     let (tx_anon_to_planet, rx_planet_from_anon) = unbounded::<ExplorerToPlanet>();
     let (_tx_planet_to_anon, rx_anon_from_planet) = unbounded::<PlanetToExplorer>();
 
     let (tx_to_eleanor, rx_to_eleanor) = unbounded::<OrchestratorToExplorer>();
-    let (tx_from_eleanor, rx_from_eleanor) = unbounded::<ExplorerToOrchestrator<()>>();
+    let (tx_from_eleanor, rx_from_eleanor) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
     let (tx_eleanor_to_planet, rx_planet_from_eleanor) = unbounded::<ExplorerToPlanet>();
     let (_tx_planet_to_eleanor, rx_eleanor_from_planet) = unbounded::<PlanetToExplorer>();
 
@@ -377,27 +377,31 @@ fn run_orchestrator() {
     // =========================================================================
 
     // --- Run Explorer "Anon" ---
-    let explorer_anon = FirstExplorer::new("Anon".to_string());
+    let mut explorer_anon = FirstExplorer::new(
+        "Anon".to_string(),
+        rx_to_anon,
+        tx_from_anon,
+        tx_anon_to_planet,
+        rx_anon_from_planet,
+        101,
+        1,
+    );
     thread::spawn(move || {
-        explorer_anon.run(
-            rx_to_anon,
-            tx_from_anon,
-            tx_anon_to_planet,
-            rx_anon_from_planet,
-            101
-        );
+        explorer_anon.run();
     });
 
     // --- Run Explorer "Eleanor" ---
-    let explorer_eleanor = FirstExplorer::new("Eleanor".to_string());
+    let mut explorer_eleanor = FirstExplorer::new(
+        "Eleanor".to_string(),
+        rx_to_eleanor,
+        tx_from_eleanor,
+        tx_eleanor_to_planet,
+        rx_eleanor_from_planet,
+        102,
+        2,
+    );
     thread::spawn(move || {
-        explorer_eleanor.run(
-            rx_to_eleanor,
-            tx_from_eleanor,
-            tx_eleanor_to_planet,
-            rx_eleanor_from_planet,
-            102
-        );
+        explorer_eleanor.run();
     });
 
     let explorers = vec![

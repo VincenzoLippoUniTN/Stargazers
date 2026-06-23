@@ -1,0 +1,19 @@
+[package]
+name = "galaxy_visualizer_stargazers"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "galaxy_visualizer_stargazers"
+path = "src/lib.rs"
+
+[[bin]]
+name = "galaxy_visualizer_stargazers"
+path = "src/main.rs"
+
+[dependencies]
+bevy = "0.14"
+rand = "0.8"
+crossbeam-channel = "0.5"
+
+# Profiles are defined in the workspace root (../Cargo.toml).

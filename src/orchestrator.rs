@@ -21,7 +21,7 @@ use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer
 // =========================================================================
 // INTERNAL MODULES
 // =========================================================================
-use crate::exp_dir::{Explorer, BagSnapshot, roaming_explorer, harvesting_explorer};
+use crate::explorers::{Explorer, BagSnapshot, roaming_explorer, harvesting_explorer};
 
 // =========================================================================
 // PLANET CREATION ALIASES

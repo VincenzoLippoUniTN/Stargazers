@@ -20,6 +20,7 @@ use common_game::logging::{ActorType, Channel, EventType, LogEvent, Participant,
 use super::bag::{Bag, BagSnapshot};
 
 type SharedExplorer = Arc<(Mutex<Explorer>, Condvar)>;
+pub type ExplorerBehaviour = fn(AI);
 
 pub struct Explorer {
     pub name: String,

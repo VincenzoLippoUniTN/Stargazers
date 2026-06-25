@@ -19,6 +19,7 @@ dependencies = [
  "ara_kees",
  "common-game",
  "crossbeam-channel",
+ "env_logger",
  "galaxy_visualizer_stargazers",
  "immutable_cosmic_borrow",
  "log",

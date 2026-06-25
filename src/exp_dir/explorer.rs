@@ -13,11 +13,15 @@ use common_game::components::resource::{BasicResource, BasicResourceType, Comple
 use common_game::components::resource::BasicResourceType::{Carbon, Hydrogen, Oxygen, Silicon};
 use common_game::components::resource::ComplexResourceType::{Water, Diamond, Life, Robot, Dolphin, AIPartner};
 use common_game::utils::ID;
-use crate::bag::{Bag, BagSnapshot};
 
-type SharedExplorer = Arc<(Mutex<FirstExplorer>, Condvar)>;
+// Structured logging (logging.rs). Adjust this path if the module isn't `common_game::logging`.
+use common_game::logging::{ActorType, Channel, EventType, LogEvent, Participant, Payload};
 
-pub struct FirstExplorer {
+use super::bag::{Bag, BagSnapshot};
+
+type SharedExplorer = Arc<(Mutex<Explorer>, Condvar)>;
+
+pub struct Explorer {
     pub name: String,
     rx_from_orchestrator: Receiver<OrchestratorToExplorer>,
     tx_to_orchestrator: Sender<ExplorerToOrchestrator<BagSnapshot>>,
@@ -32,9 +36,21 @@ pub struct FirstExplorer {
     current_neighbors: Vec<ID>,
     awaiting_move: bool,
     awaiting_neighbors: bool,
+
+    /// The autonomous behaviour that drives an explorer once it has started.
+    ///
+    /// It receives the `AI` handle (a cheap, lock-internally Arc wrapper) and owns
+    /// the main loop. `FnOnce` because it runs exactly once on its own thread and
+    /// consumes the handle; `Send + 'static` so it can cross the `thread::spawn`
+    /// boundary. Inject a different one per explorer to get different behaviours.
+    ///
+    /// Injected at construction; `take()`n out in `run()` and handed to the AI
+    /// thread. `Option` so we can move it out without disturbing the rest of
+    /// `self` (which then gets moved whole into the shared `Mutex`).
+    behaviour: Option<Box<dyn FnOnce(AI) + Send + 'static>>,
 }
 
-impl FirstExplorer {
+impl Explorer {
     pub fn new(
         name: String,
         rx_from_orchestrator: Receiver<OrchestratorToExplorer>,
@@ -43,8 +59,9 @@ impl FirstExplorer {
         rx_from_planet: Receiver<PlanetToExplorer>,
         explorer_id: ID,
         current_planet_id: ID,
+        behaviour: impl FnOnce(AI) + Send + 'static,
     ) -> Self {
-        FirstExplorer {
+        Explorer {
             name,
             rx_from_orchestrator,
             tx_to_orchestrator,
@@ -58,6 +75,7 @@ impl FirstExplorer {
             current_neighbors: Vec::new(),
             awaiting_move: false,
             awaiting_neighbors: false,
+            behaviour: Some(Box::new(behaviour)),
         }
     }
 
@@ -76,15 +94,30 @@ impl FirstExplorer {
         match self.rx_from_planet.recv_timeout(Duration::from_millis(500)) {
             Ok(PlanetToExplorer::SupportedResourceResponse { resource_list }) => {
                 self.current_generation_rules = resource_list;
-                println!("[FirstExplorer {}] ✅ Resources received from Planet AI: {:?}", self.name, self.current_generation_rules);
+                self.log_from_planet(
+                    Channel::Debug,
+                    kv([
+                        ("detail", "supported resources received".to_string()),
+                        ("resources", format!("{:?}", self.current_generation_rules)),
+                    ]),
+                );
                 Ok(())
             }
             Ok(other) => {
-                eprintln!("[FirstExplorer {}] ⚠️ Unexpected msg from planet: {:?}", self.name, other);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([
+                        ("detail", "unexpected message from planet".to_string()),
+                        ("message", format!("{other:?}")),
+                    ]),
+                );
                 Err("Unexpected msg from planet.".to_string())
             }
             Err(_) => {
-                eprintln!("[FirstExplorer {}] ⏱️ Timeout from Planet AI (Resources)! Returning empty set.", self.name);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([("detail", "timeout waiting for supported resources".to_string())]),
+                );
                 Err("Timeout from Planet AI.".to_string())
             }
         }
@@ -104,15 +137,30 @@ impl FirstExplorer {
         match self.rx_from_planet.recv_timeout(Duration::from_millis(500)) {
             Ok(PlanetToExplorer::SupportedCombinationResponse { combination_list }) => {
                 self.current_combination_cookbook = combination_list;
-                println!("[FirstExplorer {}] ✅ Combinations received from Planet AI: {:?}", self.name, self.current_combination_cookbook);
+                self.log_from_planet(
+                    Channel::Debug,
+                    kv([
+                        ("detail", "supported combinations received".to_string()),
+                        ("combinations", format!("{:?}", self.current_combination_cookbook)),
+                    ]),
+                );
                 Ok(())
             }
             Ok(other) => {
-                eprintln!("[FirstExplorer {}] ⚠️ Unexpected msg from planet: {:?}", self.name, other);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([
+                        ("detail", "unexpected message from planet".to_string()),
+                        ("message", format!("{other:?}")),
+                    ]),
+                );
                 Err("Unexpected msg from planet.".to_string())
             }
             Err(_) => {
-                eprintln!("[FirstExplorer {}] ⏱️ Timeout from Planet AI (Combinations)! Returning empty set.", self.name);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([("detail", "timeout waiting for supported combinations".to_string())]),
+                );
                 Err("Timeout from Planet AI.".to_string())
             }
         }
@@ -131,7 +179,13 @@ impl FirstExplorer {
         };
 
         if let Err(e) = self.tx_to_planet.send(req) {
-            eprintln!("[FirstExplorer {}] Error sending GenerateResource req to Planet AI: {}", self.name, e);
+            self.log_to_planet(
+                Channel::Error,
+                kv([
+                    ("detail", "failed to send GenerateResource request".to_string()),
+                    ("error", e.to_string()),
+                ]),
+            );
             return Err(e.to_string());
         }
 
@@ -139,7 +193,13 @@ impl FirstExplorer {
             Ok(PlanetToExplorer::GenerateResourceResponse { resource: opt_res }) => {
                 match opt_res {
                     Some(resource) => {
-                        println!("[FirstExplorer {}] ✅ Resource generated successfully!", self.name);
+                        self.log_from_planet(
+                            Channel::Debug,
+                            kv([
+                                ("detail", "resource generated".to_string()),
+                                ("resource", format!("{resource:?}")),
+                            ]),
+                        );
 
                         // Adding basic resource to bag
                         self.bag.add_basic(resource);
@@ -147,17 +207,29 @@ impl FirstExplorer {
                         Ok(())
                     }
                     None => {
-                        println!("[FirstExplorer {}] ❌ Planet failed to generate resource.", self.name);
+                        self.log_from_planet(
+                            Channel::Warning,
+                            kv([("detail", "planet failed to generate resource".to_string())]),
+                        );
                         Err("Resource generation failed or timed out".to_string())
                     }
                 }
             }
             Ok(other) => {
-                eprintln!("[FirstExplorer {}] ⚠️ Unexpected msg from planet: {:?}", self.name, other);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([
+                        ("detail", "unexpected message from planet".to_string()),
+                        ("message", format!("{other:?}")),
+                    ]),
+                );
                 Err("Unexpected msg from planet.".to_string())
             }
             Err(_) => {
-                eprintln!("[FirstExplorer {}] ⏱️ Timeout from Planet AI (Generation)! Returning None.", self.name);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([("detail", "timeout waiting for generate response".to_string())]),
+                );
                 Err("Timeout from Planet AI.".to_string())
             }
         }
@@ -263,11 +335,20 @@ impl FirstExplorer {
                 }
             }
             Ok(other) => {
-                eprintln!("[FirstExplorer {}] ⚠️ Unexpected msg from planet: {:?}", self.name, other);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([
+                        ("detail", "unexpected message from planet".to_string()),
+                        ("message", format!("{other:?}")),
+                    ]),
+                );
                 Err("Unexpected msg from planet.".to_string())
             }
             Err(_) => {
-                eprintln!("[FirstExplorer {}] ⏱️ Timeout from Planet AI (Generation)! Returning None.", self.name);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([("detail", "timeout waiting for combine response".to_string())]),
+                );
                 Err("Timeout from Planet AI.".to_string())
             }
         }
@@ -284,22 +365,43 @@ impl FirstExplorer {
         // 1. E --> Planet
         let req = ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id: self.explorer_id };
         if let Err(e) = self.tx_to_planet.send(req) {
-            eprintln!("[FirstExplorer {}] Error sending energy cell req to Planet AI: {}", self.name, e);
+            self.log_to_planet(
+                Channel::Error,
+                kv([
+                    ("detail", "failed to send energy-cell request".to_string()),
+                    ("error", e.to_string()),
+                ]),
+            );
             return 0;
         }
 
         // 2. waiting
         match self.rx_from_planet.recv_timeout(Duration::from_millis(500)) {
             Ok(PlanetToExplorer::AvailableEnergyCellResponse { available_cells }) => {
-                println!("[FirstExplorer {}] ✅ Energy cells received from Planet AI: {}", self.name, available_cells);
+                self.log_from_planet(
+                    Channel::Debug,
+                    kv([
+                        ("detail", "energy cells received".to_string()),
+                        ("available_cells", available_cells.to_string()),
+                    ]),
+                );
                 available_cells as usize
             }
             Ok(other) => {
-                eprintln!("[FirstExplorer {}] ⚠️ Unexpected msg from planet: {:?}", self.name, other);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([
+                        ("detail", "unexpected message from planet".to_string()),
+                        ("message", format!("{other:?}")),
+                    ]),
+                );
                 0
             }
             Err(_) => {
-                eprintln!("[FirstExplorer {}] ⏱️ Timeout from Planet AI (Energy Cells)! Returning 0.", self.name);
+                self.log_from_planet(
+                    Channel::Warning,
+                    kv([("detail", "timeout waiting for energy cells".to_string())]),
+                );
                 0
             }
         }
@@ -307,7 +409,10 @@ impl FirstExplorer {
 
     // Reset the Explorer on Orchestrator's request
     fn reset_routine(&mut self) {
-        println!("[FirstExplorer {}] 🔄 Reset requested. Wiping bag contents and resetting telemetry...", self.name);
+        self.log_internal(
+            Channel::Debug,
+            kv([("detail", "reset requested; wiping bag and telemetry".to_string())]),
+        );
 
         self.bag = Bag::new();
         self.current_generation_rules = HashSet::new();
@@ -317,7 +422,10 @@ impl FirstExplorer {
         // TODO: Clear out any other simulation baselines if needed
         // (For example, if you track traveled distance, energy spent, or a score, you would zero them out here).
 
-        println!("[FirstExplorer {}] ✅ Reset complete. Ready for new instructions.", self.name);
+        self.log_internal(
+            Channel::Debug,
+            kv([("detail", "reset complete".to_string())]),
+        );
     }
 
     // Neighbors Discovery (NeighborsRequest) request method
@@ -334,7 +442,13 @@ impl FirstExplorer {
 
     // TravelToPlanet request method
     fn initiate_travel_to_planet(&mut self, planet_id: u32) -> Result<(), String> {
-        println!("[FirstExplorer {}] Requesting travel to planet {}...", self.name, planet_id);
+        self.log_to_orchestrator(
+            Channel::Debug,
+            kv([
+                ("detail", "requesting travel to planet".to_string()),
+                ("dst_planet_id", planet_id.to_string()),
+            ]),
+        );
         let request = ExplorerToOrchestrator::TravelToPlanetRequest {
             explorer_id: self.explorer_id,
             current_planet_id: self.current_planet_id,
@@ -379,7 +493,10 @@ impl FirstExplorer {
         match msg {
             // Flow 1
             OrchestratorToExplorer::SupportedResourceRequest => {
-                println!("[FirstExplorer {}] Resource request from Orchestrator. Calling planet function...", self.name);
+                self.log_from_orchestrator(
+                    Channel::Debug,
+                    kv([("detail", "supported-resource request; querying planet".to_string())]),
+                );
 
                 // Call sequence diagram 1
                 if let Err(e) = self.ask_planet_for_resources() {
@@ -398,7 +515,10 @@ impl FirstExplorer {
 
             // Flow 2
             OrchestratorToExplorer::SupportedCombinationRequest => {
-                println!("[FirstExplorer {}] 🔍 Combinations request from Orchestrator. Calling planet function...", self.name);
+                self.log_from_orchestrator(
+                    Channel::Debug,
+                    kv([("detail", "supported-combination request; querying planet".to_string())]),
+                );
 
                 // Call directly Diagram 2
                 if let Err(e) = self.ask_planet_for_combinations() {
@@ -417,7 +537,10 @@ impl FirstExplorer {
 
             // Flow 3
             OrchestratorToExplorer::GenerateResourceRequest { to_generate } => {
-                println!("[FirstExplorer {}] 🛠️ Orchestrator asked to generate a resource. Calling planet...", self.name);
+                self.log_from_orchestrator(
+                    Channel::Debug,
+                    kv([("detail", "generate-resource request; querying planet".to_string())]),
+                );
 
                 let generation_result = self.generate_resource_from_planet(to_generate);
 
@@ -433,7 +556,10 @@ impl FirstExplorer {
 
             // Flow 4
             OrchestratorToExplorer::CombineResourceRequest { to_generate } => {
-                println!("[FirstExplorer {}] 🔄 Orchestrator asked to combine a resource. Calling planet...", self.name);
+                self.log_from_orchestrator(
+                    Channel::Debug,
+                    kv([("detail", "combine-resource request; querying planet".to_string())]),
+                );
 
                 let combine_result = self.ask_planet_to_combine_resource(to_generate);
 
@@ -502,7 +628,13 @@ impl FirstExplorer {
             }
 
             OrchestratorToExplorer::NeighborsResponse { neighbors } => {
-                println!("[FirstExplorer {}] ✅ Neighbors received: {:?}", self.name, neighbors);
+                self.log_from_orchestrator(
+                    Channel::Debug,
+                    kv([
+                        ("detail", "neighbors received".to_string()),
+                        ("neighbors", format!("{neighbors:?}")),
+                    ]),
+                );
                 self.current_neighbors = neighbors;
                 self.awaiting_neighbors = false;
                 Ok(None)
@@ -530,16 +662,34 @@ impl FirstExplorer {
     // =========================================================================
     // MAIN RUN LOOP
     // =========================================================================
-    pub fn run(self) {
-        println!("[FirstExplorer {}] Active and waiting...", self.name);
+    pub fn run(mut self) {
+        self.log_internal(
+            Channel::Debug,
+            kv([("detail", "active and waiting for start".to_string())]),
+        );
 
         match self.wait_for_start() {
             Ok(true) => { return }
-            Err(e) => { println!("Error: {}", e); return }
+            Err(e) => {
+                self.log_internal(
+                    Channel::Error,
+                    kv([
+                        ("detail", "error while waiting for start".to_string()),
+                        ("error", e),
+                    ]),
+                );
+                return
+            }
             _ => {}
         }
 
         let rx_from_orchestrator = self.rx_from_orchestrator.clone();
+        // Captured before `self` is moved into the Arc so the threads can still log.
+        let explorer_id = self.explorer_id;
+        let listener_name = self.name.clone();
+        let ai_name = self.name.clone();
+        // Pull the injected behaviour out (leaves `None` behind) before the move.
+        let behaviour = self.behaviour.take();
 
         // Explorer + Condvar: the AI thread blocks on replies the LISTENER processes.
         let explorer: SharedExplorer = Arc::new((Mutex::new(self), Condvar::new()));
@@ -557,42 +707,57 @@ impl FirstExplorer {
 
                 match outcome {
                     Ok(Some(true)) => {
-                        println!("[Listener Thread] Termination signal processed.");
+                        LogEvent::self_directed(
+                            Participant::new(ActorType::Explorer, explorer_id),
+                            EventType::InternalExplorerAction,
+                            Channel::Debug,
+                            kv([
+                                ("explorer", listener_name.clone()),
+                                ("detail", "listener: termination signal processed".to_string()),
+                            ]),
+                        )
+                            .emit();
                         break;
                     }
                     Ok(_) => {}
-                    Err(e) => eprintln!("[Listener Thread] handler error: {}", e),
+                    Err(e) => {
+                        LogEvent::self_directed(
+                            Participant::new(ActorType::Explorer, explorer_id),
+                            EventType::InternalExplorerAction,
+                            Channel::Error,
+                            kv([
+                                ("explorer", listener_name.clone()),
+                                ("detail", "listener: handler error".to_string()),
+                                ("error", e),
+                            ]),
+                        )
+                            .emit();
+                    }
                 }
             }
         });
 
         // THREAD 2: AUTONOMOUS AI LOOP — never reads rx_from_orchestrator.
+        // The behaviour was injected at construction; it owns its own loop and
+        // drives the explorer purely through the `AI` handle's public API.
         thread::spawn(move || {
-            let _ai = AI::new(&ai_explorer);
-            loop {
-                /* Example of usage of AI struct
-                if let Err(e) = ai.request_neighbors() { eprintln!("[AI] {}", e); break; }
-
-                let neighbors = ai.neighbors();
-                if neighbors.is_empty() {
-                    thread::sleep(Duration::from_millis(2000));
-                    continue;
+            let ai = AI::new(&ai_explorer);
+            match behaviour {
+                Some(run_ai) => run_ai(ai),
+                None => {
+                    // `run()` was called twice, or the explorer was built without
+                    // a behaviour. Nothing to drive, so just idle out.
+                    LogEvent::self_directed(
+                        Participant::new(ActorType::Explorer, explorer_id),
+                        EventType::InternalExplorerAction,
+                        Channel::Warning,
+                        kv([
+                            ("explorer", ai_name.clone()),
+                            ("detail", "no AI behaviour injected; AI thread idle".to_string()),
+                        ]),
+                    )
+                        .emit();
                 }
-
-                let dst = neighbors[0]; // your real AI picks here
-                if let Err(e) = ai.travel(dst) {
-                    eprintln!("[AI] {}", e);
-                    thread::sleep(Duration::from_millis(2000));
-                    continue;
-                }
-
-                let _ = ai.discover_resources();
-                let _ = ai.generate(BasicResourceType::Oxygen);
-                let _ = ai.combine(ComplexResourceType::Water);
-                let snap = ai.bag(); // inspect bag if you want
-                 */
-
-                thread::sleep(Duration::from_millis(2000));
             }
         });
     }
@@ -626,59 +791,178 @@ impl FirstExplorer {
         }
         Err(ORCH_DISCONNECT_ERR.to_string())
     }
+
+    // =========================================================================
+    // LOGGING HELPERS
+    // Translate the old terminal prints into structured `LogEvent`s emitted
+    // through the `log` crate. Every helper auto-tags the payload with the
+    // explorer name. Channel policy:
+    //   - Debug   : normal status / received responses
+    //   - Warning : recoverable anomalies (timeouts, unexpected msgs, planet refusals)
+    //   - Error   : broken communication (disconnected channels / failed sends)
+    // =========================================================================
+    fn me(&self) -> Participant {
+        Participant::new(ActorType::Explorer, self.explorer_id)
+    }
+    fn planet_participant(&self) -> Participant {
+        Participant::new(ActorType::Planet, self.current_planet_id)
+    }
+    fn orchestrator_participant() -> Participant {
+        Participant::new(ActorType::Orchestrator, 0u32)
+    }
+
+    fn emit_event(
+        &self,
+        sender: Option<Participant>,
+        receiver: Option<Participant>,
+        event_type: EventType,
+        channel: Channel,
+        mut payload: Payload,
+    ) {
+        payload
+            .entry("explorer".to_string())
+            .or_insert_with(|| self.name.clone());
+        LogEvent::new(sender, receiver, event_type, channel, payload).emit();
+    }
+
+    /// Planet -> this explorer.
+    fn log_from_planet(&self, channel: Channel, payload: Payload) {
+        self.emit_event(
+            Some(self.planet_participant()),
+            Some(self.me()),
+            EventType::MessagePlanetToExplorer,
+            channel,
+            payload,
+        );
+    }
+    /// This explorer -> planet.
+    fn log_to_planet(&self, channel: Channel, payload: Payload) {
+        self.emit_event(
+            Some(self.me()),
+            Some(self.planet_participant()),
+            EventType::MessageExplorerToPlanet,
+            channel,
+            payload,
+        );
+    }
+    /// Orchestrator -> this explorer.
+    fn log_from_orchestrator(&self, channel: Channel, payload: Payload) {
+        self.emit_event(
+            Some(Self::orchestrator_participant()),
+            Some(self.me()),
+            EventType::MessageOrchestratorToExplorer,
+            channel,
+            payload,
+        );
+    }
+    /// This explorer -> orchestrator.
+    fn log_to_orchestrator(&self, channel: Channel, payload: Payload) {
+        self.emit_event(
+            Some(self.me()),
+            Some(Self::orchestrator_participant()),
+            EventType::MessageExplorerToOrchestrator,
+            channel,
+            payload,
+        );
+    }
+    /// Internal explorer action (self-directed).
+    fn log_internal(&self, channel: Channel, payload: Payload) {
+        self.emit_event(
+            Some(self.me()),
+            Some(self.me()),
+            EventType::InternalExplorerAction,
+            channel,
+            payload,
+        );
+    }
+}
+
+/// Build a `Payload` from a fixed set of `&str -> String` pairs.
+fn kv<const N: usize>(entries: [(&str, String); N]) -> Payload {
+    let mut map = Payload::new();
+    for (k, v) in entries {
+        map.insert(k.to_string(), v);
+    }
+    map
 }
 
 /// AI-side handle. Every method locks internally — the AI loop never touches
 /// a guard. Cheap to make (just an Arc refcount bump).
-struct AI {
+///
+/// `pub(crate)` so behaviour functions can be authored in their own module
+/// (e.g. `crate::behaviours`) and still call this handle's API. The methods
+/// below are the *entire* surface a behaviour needs — it never touches
+/// `Explorer`'s internals directly.
+pub(crate) struct AI {
     slot: SharedExplorer,
 }
 
 impl AI {
-    fn new(slot: &SharedExplorer) -> Self {
+    pub(crate) fn new(slot: &SharedExplorer) -> Self {
         AI { slot: Arc::clone(slot) }
     }
 
-    // ---- orchestrator: fire + wait (delegates to existing helpers) ----
-    fn request_neighbors(&self) -> Result<(), String> {
-        FirstExplorer::request_neighbors_and_wait(&self.slot)
+    /// Emit a structured self-directed log from inside a behaviour. Locks
+    /// briefly to read the explorer's identity, then unlocks before emitting.
+    /// This is the behaviour-facing equivalent of `Explorer::log_internal`.
+    pub(crate) fn log(&self, channel: Channel, detail: &str) {
+        let (id, name) = {
+            let (lock, _) = &*self.slot;
+            let g = lock.lock().unwrap();
+            (g.explorer_id, g.name.clone())
+        };
+        let mut payload = Payload::new();
+        payload.insert("explorer".to_string(), name);
+        payload.insert("detail".to_string(), detail.to_string());
+        LogEvent::self_directed(
+            Participant::new(ActorType::Explorer, id),
+            EventType::InternalExplorerAction,
+            channel,
+            payload,
+        )
+            .emit();
     }
-    fn travel(&self, dst: u32) -> Result<(), String> {
-        FirstExplorer::travel_and_wait(&self.slot, dst)
+
+    // ---- orchestrator: fire + wait (delegates to existing helpers) ----
+    pub(crate) fn request_neighbors(&self) -> Result<(), String> {
+        Explorer::request_neighbors_and_wait(&self.slot)
+    }
+    pub(crate) fn travel(&self, dst: u32) -> Result<(), String> {
+        Explorer::travel_and_wait(&self.slot, dst)
     }
 
     // ---- reads: lock, copy out, unlock ----
-    fn neighbors(&self) -> Vec<ID> {
+    pub(crate) fn neighbors(&self) -> Vec<ID> {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().current_neighbors.clone()
     }
-    fn current_planet(&self) -> u32 {
+    pub(crate) fn current_planet(&self) -> u32 {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().current_planet_id
     }
-    fn bag(&self) -> BagSnapshot {
+    pub(crate) fn bag(&self) -> BagSnapshot {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().bag.snapshot()
     }
 
     // ---- planet round-trips: lock, &mut self method, unlock ----
-    fn discover_resources(&self) -> Result<(), String> {
+    pub(crate) fn discover_resources(&self) -> Result<(), String> {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().ask_planet_for_resources()
     }
-    fn discover_combinations(&self) -> Result<(), String> {
+    pub(crate) fn discover_combinations(&self) -> Result<(), String> {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().ask_planet_for_combinations()
     }
-    fn generate(&self, r: BasicResourceType) -> Result<(), String> {
+    pub(crate) fn generate(&self, r: BasicResourceType) -> Result<(), String> {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().generate_resource_from_planet(r)
     }
-    fn combine(&self, c: ComplexResourceType) -> Result<(), String> {
+    pub(crate) fn combine(&self, c: ComplexResourceType) -> Result<(), String> {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().ask_planet_to_combine_resource(c)
     }
-    fn energy_cells(&self) -> usize {
+    pub(crate) fn energy_cells(&self) -> usize {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().ask_planet_for_available_energy_cells()
     }
@@ -698,7 +982,7 @@ impl AI {
 mod tests {
     use super::*;
     use crossbeam_channel::unbounded;
-    use std::sync::{Arc, Condvar, Mutex};
+    use std::sync::{Arc, Condvar, Mutex, Once};
     use std::thread;
     use std::time::Duration;
 
@@ -712,6 +996,27 @@ mod tests {
 
     const T: Duration = Duration::from_secs(1);
 
+    // Initialise `env_logger` exactly once for the whole test binary.
+    // `is_test(true)` routes log output through libtest's capture, so it only
+    // shows for failing tests — or for every test when you pass `--nocapture`.
+    // Control verbosity with the RUST_LOG env var. To watch the explorer's
+    // structured logs while testing, run:
+    //     RUST_LOG=debug cargo test -- --nocapture
+    static LOGGER_INIT: Once = Once::new();
+    fn init_test_logger() {
+        LOGGER_INIT.call_once(|| {
+            // is_test(false): write to the real stderr fd, which libtest does NOT
+            //   capture -> logs appear on a plain `cargo test` (no --nocapture).
+            // default_filter_or("debug"): show Debug/Info/Warn/Error when RUST_LOG
+            //   is unset; RUST_LOG still overrides (use "trace" to include Trace).
+            let _ = env_logger::Builder::from_env(
+                env_logger::Env::default().default_filter_or("debug"),
+            )
+                .is_test(false)
+                .try_init();
+        });
+    }
+
     // Build the four channels + an explorer in one shot.
     // Returns (explorer, tx_orch_to_exp, rx_orch_from_exp, rx_planet_from_exp, tx_planet_to_exp).
     fn make(
@@ -719,18 +1024,20 @@ mod tests {
         explorer_id: ID,
         planet_id: ID,
     ) -> (
-        FirstExplorer,
+        Explorer,
         Sender<OrchestratorToExplorer>,
         Receiver<ExplorerToOrchestrator<BagSnapshot>>,
         Receiver<ExplorerToPlanet>,
         Sender<PlanetToExplorer>,
     ) {
+        init_test_logger();
+
         let (tx_orch_to_exp, rx_exp_from_orch) = unbounded::<OrchestratorToExplorer>();
         let (tx_exp_to_orch, rx_orch_from_exp) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
         let (tx_exp_to_planet, rx_planet_from_exp) = unbounded::<ExplorerToPlanet>();
         let (tx_planet_to_exp, rx_exp_from_planet) = unbounded::<PlanetToExplorer>();
 
-        let explorer = FirstExplorer::new(
+        let explorer = Explorer::new(
             name.to_string(),
             rx_exp_from_orch,
             tx_exp_to_orch,
@@ -738,6 +1045,10 @@ mod tests {
             rx_exp_from_planet,
             explorer_id,
             planet_id,
+            // Tests drive the explorer directly via its methods / the AI handle,
+            // so they don't need a real behaviour. `run()` is exercised once in
+            // the integration test, which is fine with this no-op.
+            |_ai| {},
         );
         (explorer, tx_orch_to_exp, rx_orch_from_exp, rx_planet_from_exp, tx_planet_to_exp)
     }
@@ -1097,7 +1408,7 @@ mod tests {
             cvar.notify_all();
         });
 
-        assert!(FirstExplorer::request_neighbors_and_wait(&slot).is_ok());
+        assert!(Explorer::request_neighbors_and_wait(&slot).is_ok());
 
         let g = slot.0.lock().unwrap();
         assert_eq!(g.current_neighbors, vec![7, 8]);
@@ -1129,7 +1440,7 @@ mod tests {
             let _ = rx_orch.recv_timeout(T); // drain MovedToPlanetResult
         });
 
-        assert!(FirstExplorer::travel_and_wait(&slot, 5).is_ok());
+        assert!(Explorer::travel_and_wait(&slot, 5).is_ok());
 
         let g = slot.0.lock().unwrap();
         assert_eq!(g.current_planet_id, 5);
@@ -1159,7 +1470,7 @@ mod tests {
             cvar.notify_all();
         });
 
-        assert!(FirstExplorer::travel_and_wait(&slot, 5).is_err());
+        assert!(Explorer::travel_and_wait(&slot, 5).is_err());
 
         let g = slot.0.lock().unwrap();
         assert_eq!(g.current_planet_id, 0); // unchanged

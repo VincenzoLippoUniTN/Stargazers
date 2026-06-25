@@ -21,8 +21,7 @@ use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer
 // =========================================================================
 // INTERNAL MODULES
 // =========================================================================
-use crate::explorer::{BagItem, Explorer};
-use crate::first_explorer::FirstExplorer;
+use crate::exp_dir::{Explorer, BagSnapshot, roaming_explorer, harvesting_explorer};
 
 // =========================================================================
 // PLANET CREATION ALIASES
@@ -34,7 +33,6 @@ use ara_kees::planet::create_planet as new_bas;
 use trip::trip as new_trp;
 use immutable_cosmic_borrow::create_planet as new_icb;
 use rusty_crab_ap2025::planet::create_planet as new_ryc;
-use crate::bag::BagSnapshot;
 // =========================================================================
 // STRUCTS
 // =========================================================================
@@ -142,8 +140,38 @@ fn build_orchestrator(
     });
     let ryc_chan = spawn_planet_thread(rx_d7, |rx, tx, rx_exp| { new_ryc(rx, tx, rx_exp, 7) });
 
-    let anon = Explorer::new("Anon".to_string());
-    let eleanor = Explorer::new("Eleanor".to_string());
+    let (tx_to_anon, rx_to_anon) = unbounded::<OrchestratorToExplorer>();
+    let (tx_from_anon, rx_from_anon) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
+    let (tx_anon_to_planet, rx_planet_from_anon) = unbounded::<ExplorerToPlanet>();
+    let (_tx_planet_to_anon, rx_anon_from_planet) = unbounded::<PlanetToExplorer>();
+
+    let (tx_to_eleanor, rx_to_eleanor) = unbounded::<OrchestratorToExplorer>();
+    let (tx_from_eleanor, rx_from_eleanor) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
+    let (tx_eleanor_to_planet, rx_planet_from_eleanor) = unbounded::<ExplorerToPlanet>();
+    let (_tx_planet_to_eleanor, rx_eleanor_from_planet) = unbounded::<PlanetToExplorer>();
+
+    let mut anon = Explorer::new(
+        "Anon".to_string(),
+        rx_to_anon,
+        tx_from_anon,
+        tx_anon_to_planet,
+        rx_anon_from_planet,
+        101,
+        1,
+        roaming_explorer
+    );
+
+    // --- Run Explorer "Eleanor" ---
+    let mut eleanor = Explorer::new(
+        "Eleanor".to_string(),
+        rx_to_eleanor,
+        tx_from_eleanor,
+        tx_eleanor_to_planet,
+        rx_eleanor_from_planet,
+        102,
+        2,
+        harvesting_explorer
+    );
 
     Ok(Orchestrator::new(
         forge, csb_chan, hus_chan, omc_chan, bas_chan, trp_chan, icb_chan, ryc_chan, anon, eleanor,
@@ -377,7 +405,7 @@ fn run_orchestrator() {
     // =========================================================================
 
     // --- Run Explorer "Anon" ---
-    let mut explorer_anon = FirstExplorer::new(
+    let mut explorer_anon = Explorer::new(
         "Anon".to_string(),
         rx_to_anon,
         tx_from_anon,
@@ -385,13 +413,14 @@ fn run_orchestrator() {
         rx_anon_from_planet,
         101,
         1,
+        roaming_explorer
     );
     thread::spawn(move || {
         explorer_anon.run();
     });
 
     // --- Run Explorer "Eleanor" ---
-    let mut explorer_eleanor = FirstExplorer::new(
+    let mut explorer_eleanor = Explorer::new(
         "Eleanor".to_string(),
         rx_to_eleanor,
         tx_from_eleanor,
@@ -399,6 +428,7 @@ fn run_orchestrator() {
         rx_eleanor_from_planet,
         102,
         2,
+        harvesting_explorer
     );
     thread::spawn(move || {
         explorer_eleanor.run();

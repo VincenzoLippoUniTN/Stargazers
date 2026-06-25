@@ -2,7 +2,7 @@ use common_game::components::resource::{BasicResource, BasicResourceType, Comple
 use std::collections::HashMap;
 
 #[derive(Debug, Default)]
-pub struct Bag {
+pub(crate) struct Bag {
     basic_resources: Vec<BasicResource>,
     complex_resources: Vec<ComplexResource>,
 
@@ -13,7 +13,7 @@ pub struct Bag {
 
 impl Bag {
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             basic_resources: Vec::new(),
             complex_resources: Vec::new(),
@@ -24,20 +24,20 @@ impl Bag {
 
     // --- STORAGE METHODS ---
 
-    pub fn add_basic(&mut self, resource: BasicResource) {
+    pub(crate) fn add_basic(&mut self, resource: BasicResource) {
         // Update the tally before storing
         *self.basic_counts.entry(resource.get_type()).or_insert(0) += 1;
         self.basic_resources.push(resource);
     }
 
-    pub fn add_complex(&mut self, resource: ComplexResource) {
+    pub(crate) fn add_complex(&mut self, resource: ComplexResource) {
         // Update the tally before storing
         *self.complex_counts.entry(resource.get_type()).or_insert(0) += 1;
         self.complex_resources.push(resource);
     }
 
     /// Convenience method to store a `GenericResource` by unpacking it into the correct collection.
-    pub fn add_generic(&mut self, resource: GenericResource) {
+    pub(crate) fn add_generic(&mut self, resource: GenericResource) {
         match resource {
             GenericResource::BasicResources(basic) => self.add_basic(basic),
             GenericResource::ComplexResources(complex) => self.add_complex(complex),
@@ -46,7 +46,7 @@ impl Bag {
 
     // --- EXTRACTION METHODS ---
 
-    pub fn take_basic(&mut self, resource_type: BasicResourceType) -> Option<BasicResource> {
+    pub(crate) fn take_basic(&mut self, resource_type: BasicResourceType) -> Option<BasicResource> {
         let index = self
             .basic_resources
             .iter()
@@ -62,7 +62,7 @@ impl Bag {
         Some(resource)
     }
 
-    pub fn take_complex(&mut self, resource_type: ComplexResourceType) -> Option<ComplexResource> {
+    pub(crate) fn take_complex(&mut self, resource_type: ComplexResourceType) -> Option<ComplexResource> {
         let index = self
             .complex_resources
             .iter()
@@ -79,7 +79,7 @@ impl Bag {
     }
 
     /// Convenience method to take out any resource using the unified `ResourceType`.
-    pub fn take_generic(&mut self, resource_type: ResourceType) -> Option<GenericResource> {
+    pub(crate) fn take_generic(&mut self, resource_type: ResourceType) -> Option<GenericResource> {
         match resource_type {
             ResourceType::Basic(b_type) => self.take_basic(b_type).map(GenericResource::BasicResources),
             ResourceType::Complex(c_type) => self.take_complex(c_type).map(GenericResource::ComplexResources),
@@ -89,12 +89,12 @@ impl Bag {
     // --- UTILITY METHODS ---
 
     /// Checks if the bag contains at least one basic resource of the specified type.
-    pub fn contains_basic(&self, resource_type: BasicResourceType) -> bool {
+    pub(crate) fn contains_basic(&self, resource_type: BasicResourceType) -> bool {
         self.basic_counts.get(&resource_type).copied().unwrap_or(0) > 0
     }
 
     /// Checks if the bag contains at least one complex resource of the specified type.
-    pub fn contains_complex(&self, resource_type: ComplexResourceType) -> bool {
+    pub(crate) fn contains_complex(&self, resource_type: ComplexResourceType) -> bool {
         self.complex_counts.get(&resource_type).copied().unwrap_or(0) > 0
     }
 
@@ -102,7 +102,7 @@ impl Bag {
 
     /// Generates an ownership-free snapshot instantly by cloning the running tallies.
     #[must_use]
-    pub fn snapshot(&self) -> BagSnapshot {
+    pub(crate) fn snapshot(&self) -> BagSnapshot {
         BagSnapshot {
             // We just clone the pre-calculated HashMaps. Much faster!
             basic_resources: self.basic_counts.clone(),

@@ -1,9 +1,7 @@
 mod orchestrator;
-mod explorer;
-mod first_explorer;
 #[cfg(feature = "visualizer")]
 mod visualizer;
-mod bag;
+mod exp_dir;
 
 fn main() {
     println!("Hello world!");

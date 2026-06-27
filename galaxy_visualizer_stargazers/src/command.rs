@@ -7,6 +7,7 @@
 //! the simulation stays the single source of truth.
 
 use bevy::prelude::Resource;
+use common_game::components::resource::{BasicResourceType, ComplexResourceType};
 use crossbeam_channel::{Receiver, Sender};
 
 /// A manual operation the viewer asked for. Ids refer to the same planet/explorer
@@ -23,6 +24,18 @@ pub enum GalaxyCommand {
     Kill { planet_id: u32 },
     /// Send an explorer to a planet.
     MoveExplorer { explorer_id: u32, to_planet: u32 },
+    /// Kill an explorer immediately.
+    KillExplorer { explorer_id: u32 },
+    /// Ask what basic resources the explorer's current planet supports.
+    SupportedResources { explorer_id: u32 },
+    /// Ask what combination recipes the explorer's current planet supports.
+    SupportedCombinations { explorer_id: u32 },
+    /// Ask the explorer's current planet to generate a basic resource.
+    Generate { explorer_id: u32, resource: BasicResourceType },
+    /// Ask the explorer's current planet to combine a complex resource.
+    Combine { explorer_id: u32, resource: ComplexResourceType },
+    /// Ask the explorer to report its bag contents.
+    BagContent { explorer_id: u32 },
 }
 
 /// Creates a connected sink/source pair. Hand the [`CommandSink`] to
@@ -55,5 +68,11 @@ impl CommandSource {
     /// Drains every pending command.
     pub fn drain(&self) -> impl Iterator<Item = GalaxyCommand> + '_ {
         std::iter::from_fn(|| self.try_recv())
+    }
+
+    /// Consumes this handle and returns the raw crossbeam receiver.
+    /// The orchestrator uses this to wait on commands inside `select_biased!`.
+    pub fn into_receiver(self) -> Receiver<GalaxyCommand> {
+        self.0
     }
 }

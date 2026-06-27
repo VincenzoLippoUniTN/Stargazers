@@ -15,5 +15,6 @@ path = "src/main.rs"
 bevy = "0.14"
 rand = "0.8"
 crossbeam-channel = "0.5"
+common-game = "3.0.0"
 
 # Profiles are defined in the workspace root (../Cargo.toml).

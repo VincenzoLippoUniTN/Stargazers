@@ -2203,6 +2203,7 @@ name = "galaxy_visualizer_stargazers"
 version = "1.0.0"
 dependencies = [
  "bevy",
+ "common-game",
  "crossbeam-channel",
  "rand 0.8.6",
 ]

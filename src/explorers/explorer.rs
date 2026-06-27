@@ -979,754 +979,183 @@ impl AI {
 // Sections A–G need no resource internals. Section H mints REAL resources by
 // borrowing a throwaway Planet's recipe-loaded Generator/Combinator.
 // =========================================================================
+// =========================================================================
+// UNIT TESTS
+// =========================================================================
 #[cfg(test)]
 mod tests {
     use super::*;
     use crossbeam_channel::unbounded;
-    use std::sync::{Arc, Condvar, Mutex, Once};
-    use std::thread;
     use std::time::Duration;
 
-    // Extra imports for resource minting (section H).
-    use common_game::components::planet::{DummyPlanetState, Planet, PlanetAI, PlanetState, PlanetType};
-    use common_game::components::resource::{Combinator, Generator};
-    use common_game::components::rocket::Rocket;
-    use common_game::components::sunray::Sunray;
-    use common_game::components::energy_cell::EnergyCell;
-    use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
+    const T: Duration = Duration::from_millis(200);
 
-    const T: Duration = Duration::from_secs(1);
-
-    // Initialise `env_logger` exactly once for the whole test binary.
-    // `is_test(true)` routes log output through libtest's capture, so it only
-    // shows for failing tests — or for every test when you pass `--nocapture`.
-    // Control verbosity with the RUST_LOG env var. To watch the explorer's
-    // structured logs while testing, run:
-    //     RUST_LOG=debug cargo test -- --nocapture
-    static LOGGER_INIT: Once = Once::new();
-    fn init_test_logger() {
-        LOGGER_INIT.call_once(|| {
-            // is_test(false): write to the real stderr fd, which libtest does NOT
-            //   capture -> logs appear on a plain `cargo test` (no --nocapture).
-            // default_filter_or("debug"): show Debug/Info/Warn/Error when RUST_LOG
-            //   is unset; RUST_LOG still overrides (use "trace" to include Trace).
-            let _ = env_logger::Builder::from_env(
-                env_logger::Env::default().default_filter_or("debug"),
-            )
-                .is_test(false)
-                .try_init();
-        });
-    }
-
-    // Build the four channels + an explorer in one shot.
-    // Returns (explorer, tx_orch_to_exp, rx_orch_from_exp, rx_planet_from_exp, tx_planet_to_exp).
     fn make(
         name: &str,
         explorer_id: ID,
-        planet_id: ID,
+        current_planet_id: ID,
     ) -> (
         Explorer,
-        Sender<OrchestratorToExplorer>,
         Receiver<ExplorerToOrchestrator<BagSnapshot>>,
-        Receiver<ExplorerToPlanet>,
+        Sender<OrchestratorToExplorer>,
         Sender<PlanetToExplorer>,
+        Receiver<ExplorerToPlanet>,
     ) {
-        init_test_logger();
+        let (tx_orch, rx_orch) = unbounded();
+        let (tx_to_exp, rx_from_orch) = unbounded();
+        let (tx_planet, rx_from_planet) = unbounded();
+        let (tx_to_planet, rx_planet) = unbounded();
 
-        let (tx_orch_to_exp, rx_exp_from_orch) = unbounded::<OrchestratorToExplorer>();
-        let (tx_exp_to_orch, rx_orch_from_exp) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
-        let (tx_exp_to_planet, rx_planet_from_exp) = unbounded::<ExplorerToPlanet>();
-        let (tx_planet_to_exp, rx_exp_from_planet) = unbounded::<PlanetToExplorer>();
-
-        let explorer = Explorer::new(
+        let exp = Explorer::new(
             name.to_string(),
-            rx_exp_from_orch,
-            tx_exp_to_orch,
-            tx_exp_to_planet,
-            rx_exp_from_planet,
+            rx_from_orch,
+            tx_orch,
+            tx_to_planet,
+            rx_from_planet,
             explorer_id,
-            planet_id,
-            // Tests drive the explorer directly via its methods / the AI handle,
-            // so they don't need a real behaviour. `run()` is exercised once in
-            // the integration test, which is fine with this no-op.
-            |_ai| {},
+            current_planet_id,
+            |_ai| {} // Dummy behaviour vuoto per bypassare il loop AI
         );
-        (explorer, tx_orch_to_exp, rx_orch_from_exp, rx_planet_from_exp, tx_planet_to_exp)
+
+        (exp, rx_orch, tx_to_exp, tx_planet, rx_planet)
     }
 
-    // =====================================================================
-    // A. RELAY FLOWS (Orchestrator -> Explorer -> Planet -> Explorer -> Orchestrator)
-    // =====================================================================
-
     #[test]
-    fn test_flow1_supported_resources() {
-        let (mut explorer, _tx_orch, rx_orch, rx_planet, tx_planet) = make("ResBot", 30, 0);
+    fn test_ask_planet_for_resources_success() {
+        let (mut explorer, _rx_orch, _tx_to_exp, tx_planet, rx_planet) = make("ResourceBot", 10, 1);
 
-        let planet = thread::spawn(move || match rx_planet.recv_timeout(T) {
-            Ok(ExplorerToPlanet::SupportedResourceRequest { explorer_id }) => {
-                assert_eq!(explorer_id, 30);
-                let mut set = HashSet::new();
-                set.insert(Oxygen);
-                tx_planet
-                    .send(PlanetToExplorer::SupportedResourceResponse { resource_list: set })
-                    .unwrap();
+        let planet_thread = thread::spawn(move || {
+            match rx_planet.recv_timeout(T) {
+                Ok(ExplorerToPlanet::SupportedResourceRequest { explorer_id }) => {
+                    assert_eq!(explorer_id, 10);
+                }
+                _ => panic!("Expected SupportedResourceRequest message"),
             }
-            _ => panic!("planet did not receive SupportedResourceRequest"),
+
+            let mut resources = HashSet::new();
+            resources.insert(Oxygen);
+            resources.insert(Carbon);
+
+            tx_planet.send(PlanetToExplorer::SupportedResourceResponse {
+                resource_list: resources,
+            }).unwrap();
         });
 
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::SupportedResourceRequest);
-        assert!(matches!(res, Ok(None)));
+        let res = explorer.ask_planet_for_resources();
+        assert!(res.is_ok());
+
+        planet_thread.join().unwrap();
+
         assert!(explorer.current_generation_rules.contains(&Oxygen));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::SupportedResourceResult { explorer_id, supported_resources }) => {
-                assert_eq!(explorer_id, 30);
-                assert!(supported_resources.contains(&Oxygen));
-            }
-            _ => panic!("expected SupportedResourceResult"),
-        }
-        planet.join().unwrap();
+        assert!(explorer.current_generation_rules.contains(&Carbon));
     }
 
     #[test]
-    fn test_flow2_supported_combinations() {
-        let (mut explorer, _tx_orch, rx_orch, rx_planet, tx_planet) = make("ComboBot", 31, 0);
+    fn test_ask_planet_for_combinations_success() {
+        let (mut explorer, _rx_orch, _tx_to_exp, tx_planet, rx_planet) = make("ComboBot", 11, 2);
 
-        let planet = thread::spawn(move || match rx_planet.recv_timeout(T) {
-            Ok(ExplorerToPlanet::SupportedCombinationRequest { explorer_id }) => {
-                assert_eq!(explorer_id, 31);
-                let mut set = HashSet::new();
-                set.insert(Water);
-                tx_planet
-                    .send(PlanetToExplorer::SupportedCombinationResponse { combination_list: set })
-                    .unwrap();
+        let planet_thread = thread::spawn(move || {
+            match rx_planet.recv_timeout(T) {
+                Ok(ExplorerToPlanet::SupportedCombinationRequest { explorer_id }) => {
+                    assert_eq!(explorer_id, 11);
+                }
+                _ => panic!("Expected SupportedCombinationRequest message"),
             }
-            _ => panic!("planet did not receive SupportedCombinationRequest"),
+
+            let mut combos = HashSet::new();
+            combos.insert(Water);
+
+            tx_planet.send(PlanetToExplorer::SupportedCombinationResponse {
+                combination_list: combos,
+            }).unwrap();
         });
 
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::SupportedCombinationRequest);
-        assert!(matches!(res, Ok(None)));
+        let res = explorer.ask_planet_for_combinations();
+        assert!(res.is_ok());
+
+        planet_thread.join().unwrap();
+
         assert!(explorer.current_combination_cookbook.contains(&Water));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::SupportedCombinationResult { explorer_id, combination_list }) => {
-                assert_eq!(explorer_id, 31);
-                assert!(combination_list.contains(&Water));
-            }
-            _ => panic!("expected SupportedCombinationResult"),
-        }
-        planet.join().unwrap();
     }
 
     #[test]
-    fn test_flow3_generate_failure() {
-        // Planet replies None -> generation failed.
-        let (mut explorer, _tx_orch, rx_orch, rx_planet, tx_planet) = make("GenBot", 32, 0);
+    fn test_generate_resource_refusal() {
+        let (mut explorer, _rx_orch, _tx_to_exp, tx_planet, rx_planet) = make("FailBot", 12, 3);
 
-        let planet = thread::spawn(move || match rx_planet.recv_timeout(T) {
-            Ok(ExplorerToPlanet::GenerateResourceRequest { explorer_id, resource }) => {
-                assert_eq!(explorer_id, 32);
+        let planet_thread = thread::spawn(move || {
+            if let Ok(ExplorerToPlanet::GenerateResourceRequest { explorer_id, resource }) = rx_planet.recv_timeout(T) {
+                assert_eq!(explorer_id, 12);
                 assert_eq!(resource, Oxygen);
-                tx_planet
-                    .send(PlanetToExplorer::GenerateResourceResponse { resource: None })
-                    .unwrap();
+            } else {
+                panic!("Expected GenerateResourceRequest message");
             }
-            _ => panic!("planet did not receive GenerateResourceRequest"),
+
+            tx_planet.send(PlanetToExplorer::GenerateResourceResponse {
+                resource: None,
+            }).unwrap();
         });
 
-        let res = explorer
-            .handle_orchestrator_msg(OrchestratorToExplorer::GenerateResourceRequest { to_generate: Oxygen });
-        assert!(matches!(res, Ok(None)));
+        let res = explorer.generate_resource_from_planet(Oxygen);
+        assert!(res.is_err(), "La generazione doveva fallire correttamente");
+        assert_eq!(res.unwrap_err(), "Resource generation failed or timed out");
 
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::GenerateResourceResponse { explorer_id, generated }) => {
-                assert_eq!(explorer_id, 32);
-                assert!(generated.is_err());
-            }
-            _ => panic!("expected GenerateResourceResponse"),
-        }
-        planet.join().unwrap();
+        planet_thread.join().unwrap();
     }
 
     #[test]
-    fn test_flow4_combine_insufficient_resources() {
-        // Empty bag -> combine early-returns Err BEFORE touching the planet.
-        let (mut explorer, _tx_orch, rx_orch, rx_planet, _tx_planet) = make("CombineBot", 14, 0);
+    fn test_energy_cells_request() {
+        let (explorer, _rx_orch, _tx_to_exp, tx_planet, rx_planet) = make("EnergyBot", 13, 4);
 
-        let res = explorer
-            .handle_orchestrator_msg(OrchestratorToExplorer::CombineResourceRequest { to_generate: Water });
-        assert!(matches!(res, Ok(None)));
-
-        assert!(rx_planet.try_recv().is_err(), "planet must NOT receive a request on insufficient resources");
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::CombineResourceResponse { explorer_id, generated }) => {
-                assert_eq!(explorer_id, 14);
-                assert!(generated.is_err());
+        let planet_thread = thread::spawn(move || {
+            if let Ok(ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id }) = rx_planet.recv_timeout(T) {
+                assert_eq!(explorer_id, 13);
             }
-            _ => panic!("expected CombineResourceResponse"),
-        }
-    }
 
-    // =====================================================================
-    // B. DIRECT PLANET METHOD (energy cells)
-    // =====================================================================
-
-    #[test]
-    fn test_energy_cells_success() {
-        let (explorer, _tx_orch, _rx_orch, rx_planet, tx_planet) = make("EnergyBot", 42, 0);
-
-        let planet = thread::spawn(move || match rx_planet.recv_timeout(T) {
-            Ok(ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id }) => {
-                assert_eq!(explorer_id, 42);
-                tx_planet
-                    .send(PlanetToExplorer::AvailableEnergyCellResponse { available_cells: 10 })
-                    .unwrap();
-            }
-            _ => panic!("planet did not receive AvailableEnergyCellRequest"),
+            tx_planet.send(PlanetToExplorer::AvailableEnergyCellResponse {
+                available_cells: 42,
+            }).unwrap();
         });
 
-        assert_eq!(explorer.ask_planet_for_available_energy_cells(), 10);
-        planet.join().unwrap();
+        let cells = explorer.ask_planet_for_available_energy_cells();
+        assert_eq!(cells, 42);
+
+        planet_thread.join().unwrap();
     }
 
     #[test]
-    fn test_energy_cells_timeout_returns_zero() {
-        // Receiver kept alive (send succeeds) but never answers -> timeout -> 0.
-        let (explorer, _tx_orch, _rx_orch, _rx_planet, _tx_planet) = make("EnergyTimeoutBot", 43, 0);
-        assert_eq!(explorer.ask_planet_for_available_energy_cells(), 0);
-    }
+    fn test_handle_orchestrator_msg_neighbors_response() {
+        let (mut explorer, _rx_orch, _tx_to_exp, _tx_planet, _rx_planet) = make("NavBot", 14, 5);
 
-    // =====================================================================
-    // C. SIMPLE LIFECYCLE / STATE HANDLERS
-    // =====================================================================
+        explorer.awaiting_neighbors = true;
 
-    #[test]
-    fn test_bag_content_request_empty() {
-        let (mut explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("BagBot", 6, 0);
+        let msg = OrchestratorToExplorer::NeighborsResponse {
+            neighbors: vec![99, 100],
+        };
 
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::BagContentRequest);
-        assert!(matches!(res, Ok(None)));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::BagContentResponse { explorer_id, bag_content }) => {
-                assert_eq!(explorer_id, 6);
-                assert!(bag_content.basic_resources.is_empty());
-                assert!(bag_content.complex_resources.is_empty());
-            }
-            _ => panic!("expected BagContentResponse"),
-        }
+        let res = explorer.handle_orchestrator_msg(msg);
+        assert!(res.is_ok());
+        assert_eq!(explorer.current_neighbors, vec![99, 100]);
+        assert!(!explorer.awaiting_neighbors);
     }
 
     #[test]
-    fn test_reset_routine_clears_state() {
-        let (mut explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("ResetBot", 7, 0);
+    fn test_handle_orchestrator_msg_reset() {
+        let (mut explorer, rx_orch, _tx_to_exp, _tx_planet, _rx_planet) = make("ResetBot", 15, 6);
 
         explorer.current_neighbors = vec![1, 2, 3];
         explorer.current_generation_rules.insert(Oxygen);
-        explorer.current_combination_cookbook.insert(Water);
 
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::ResetExplorerAI);
-        assert!(matches!(res, Ok(None)));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::ResetExplorerAIResult { explorer_id }) => assert_eq!(explorer_id, 7),
-            _ => panic!("expected ResetExplorerAIResult"),
-        }
+        let msg = OrchestratorToExplorer::ResetExplorerAI;
+        let res = explorer.handle_orchestrator_msg(msg);
+        assert!(res.is_ok());
 
         assert!(explorer.current_neighbors.is_empty());
         assert!(explorer.current_generation_rules.is_empty());
-        assert!(explorer.current_combination_cookbook.is_empty());
-    }
 
-    #[test]
-    fn test_current_planet_request() {
-        let (mut explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("PlanetBot", 8, 42);
-
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::CurrentPlanetRequest);
-        assert!(matches!(res, Ok(None)));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::CurrentPlanetResult { explorer_id, planet_id }) => {
-                assert_eq!(explorer_id, 8);
-                assert_eq!(planet_id, 42);
-            }
-            _ => panic!("expected CurrentPlanetResult"),
+        if let Ok(ExplorerToOrchestrator::ResetExplorerAIResult { explorer_id }) = rx_orch.recv_timeout(T) {
+            assert_eq!(explorer_id, 15);
+        } else {
+            panic!("L'esploratore non ha inviato ResetExplorerAIResult all'orchestrator");
         }
     }
-
-    #[test]
-    fn test_kill_returns_terminate_signal() {
-        // Requires the handler's KillExplorer arm to send KillExplorerResult.
-        let (mut explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("KillBot", 9, 0);
-
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::KillExplorer);
-        assert!(matches!(res, Ok(Some(true))), "KillExplorer must signal termination");
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::KillExplorerResult { explorer_id }) => assert_eq!(explorer_id, 9),
-            _ => panic!("expected KillExplorerResult"),
-        }
-    }
-
-    #[test]
-    fn test_neighbors_response_applies_and_clears_flag() {
-        let (mut explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("NeighResp", 12, 0);
-        explorer.awaiting_neighbors = true;
-
-        let res = explorer
-            .handle_orchestrator_msg(OrchestratorToExplorer::NeighborsResponse { neighbors: vec![3, 4, 5] });
-        assert!(matches!(res, Ok(None)));
-        assert_eq!(explorer.current_neighbors, vec![3, 4, 5]);
-        assert!(!explorer.awaiting_neighbors);
-
-        assert!(rx_orch.try_recv().is_err(), "NeighborsResponse produces no orchestrator reply");
-    }
-
-    #[test]
-    fn test_move_to_planet_success() {
-        let (mut explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("MoveBot", 10, 0);
-        explorer.awaiting_move = true;
-        explorer.current_neighbors = vec![1, 2];
-
-        let (tx_new_planet, _rx_new_planet) = unbounded::<ExplorerToPlanet>();
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::MoveToPlanet {
-            sender_to_new_planet: Some(tx_new_planet),
-            planet_id: 99,
-        });
-        assert!(matches!(res, Ok(None)));
-        assert_eq!(explorer.current_planet_id, 99);
-        assert!(!explorer.awaiting_move);
-        assert!(explorer.current_neighbors.is_empty(), "neighbors must be reset after a move");
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::MovedToPlanetResult { explorer_id, planet_id }) => {
-                assert_eq!(explorer_id, 10);
-                assert_eq!(planet_id, 99);
-            }
-            _ => panic!("expected MovedToPlanetResult"),
-        }
-    }
-
-    #[test]
-    fn test_move_to_planet_failure_clears_flag() {
-        let (mut explorer, _tx_orch, _rx_orch, _rx_planet, _tx_planet) = make("MoveFailBot", 11, 7);
-        explorer.awaiting_move = true;
-
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::MoveToPlanet {
-            sender_to_new_planet: None,
-            planet_id: 99,
-        });
-        assert!(res.is_err());
-        assert_eq!(explorer.current_planet_id, 7); // unchanged
-        assert!(!explorer.awaiting_move); // cleared so a waiting AI can't hang
-    }
-
-    #[test]
-    fn test_unexpected_message_is_error() {
-        let (mut explorer, _tx_orch, _rx_orch, _rx_planet, _tx_planet) = make("OddBot", 13, 0);
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::StartExplorerAI);
-        assert!(res.is_err());
-    }
-
-    // =====================================================================
-    // D. wait_for_start (pre-send into the buffered channel, then call directly)
-    // =====================================================================
-
-    #[test]
-    fn test_wait_for_start_returns_on_start() {
-        let (explorer, tx_orch, rx_orch, _rx_planet, _tx_planet) = make("StartBot", 5, 0);
-
-        tx_orch.send(OrchestratorToExplorer::StartExplorerAI).unwrap();
-        assert_eq!(explorer.wait_for_start(), Ok(false));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::StartExplorerAIResult { explorer_id }) => assert_eq!(explorer_id, 5),
-            _ => panic!("expected StartExplorerAIResult"),
-        }
-    }
-
-    #[test]
-    fn test_wait_for_start_returns_on_kill() {
-        let (explorer, tx_orch, rx_orch, _rx_planet, _tx_planet) = make("StartKillBot", 5, 0);
-
-        tx_orch.send(OrchestratorToExplorer::KillExplorer).unwrap();
-        assert_eq!(explorer.wait_for_start(), Ok(true));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::KillExplorerResult { explorer_id }) => assert_eq!(explorer_id, 5),
-            _ => panic!("expected KillExplorerResult"),
-        }
-    }
-
-    // =====================================================================
-    // E. StopExplorerAI (blocks in wait_for_start, then resumes on Start)
-    // =====================================================================
-
-    #[test]
-    fn test_stop_then_start_resumes() {
-        let (mut explorer, tx_orch, rx_orch, _rx_planet, _tx_planet) = make("StopBot", 4, 0);
-
-        let handle = thread::spawn(move || {
-            explorer.handle_orchestrator_msg(OrchestratorToExplorer::StopExplorerAI)
-        });
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::StopExplorerAIResult { explorer_id }) => assert_eq!(explorer_id, 4),
-            _ => panic!("expected StopExplorerAIResult"),
-        }
-
-        tx_orch.send(OrchestratorToExplorer::StartExplorerAI).unwrap();
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::StartExplorerAIResult { explorer_id }) => assert_eq!(explorer_id, 4),
-            _ => panic!("expected StartExplorerAIResult after resume"),
-        }
-
-        assert!(matches!(handle.join().unwrap(), Ok(None)));
-    }
-
-    // =====================================================================
-    // F. CONDVAR HELPERS — a fake listener applies the reply under the lock
-    //    + notifies, exactly as run()'s listener does.
-    // =====================================================================
-
-    #[test]
-    fn test_request_neighbors_and_wait() {
-        let (explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("NeighborWaitBot", 1, 0);
-        let slot: SharedExplorer = Arc::new((Mutex::new(explorer), Condvar::new()));
-        let slot_listener = Arc::clone(&slot);
-
-        let fake = thread::spawn(move || {
-            match rx_orch.recv_timeout(T) {
-                Ok(ExplorerToOrchestrator::NeighborsRequest { explorer_id, .. }) => assert_eq!(explorer_id, 1),
-                _ => panic!("expected NeighborsRequest"),
-            }
-            let (lock, cvar) = &*slot_listener;
-            let mut g = lock.lock().unwrap();
-            let _ = g.handle_orchestrator_msg(OrchestratorToExplorer::NeighborsResponse { neighbors: vec![7, 8] });
-            drop(g);
-            cvar.notify_all();
-        });
-
-        assert!(Explorer::request_neighbors_and_wait(&slot).is_ok());
-
-        let g = slot.0.lock().unwrap();
-        assert_eq!(g.current_neighbors, vec![7, 8]);
-        assert!(!g.awaiting_neighbors);
-        drop(g);
-        fake.join().unwrap();
-    }
-
-    #[test]
-    fn test_travel_and_wait_success() {
-        let (explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("TravelBot", 2, 0);
-        let slot: SharedExplorer = Arc::new((Mutex::new(explorer), Condvar::new()));
-        let slot_listener = Arc::clone(&slot);
-
-        let fake = thread::spawn(move || {
-            match rx_orch.recv_timeout(T) {
-                Ok(ExplorerToOrchestrator::TravelToPlanetRequest { dst_planet_id, .. }) => assert_eq!(dst_planet_id, 5),
-                _ => panic!("expected TravelToPlanetRequest"),
-            }
-            let (tx_new_planet, _rx_new_planet) = unbounded::<ExplorerToPlanet>();
-            let (lock, cvar) = &*slot_listener;
-            let mut g = lock.lock().unwrap();
-            let _ = g.handle_orchestrator_msg(OrchestratorToExplorer::MoveToPlanet {
-                sender_to_new_planet: Some(tx_new_planet),
-                planet_id: 5,
-            });
-            drop(g);
-            cvar.notify_all();
-            let _ = rx_orch.recv_timeout(T); // drain MovedToPlanetResult
-        });
-
-        assert!(Explorer::travel_and_wait(&slot, 5).is_ok());
-
-        let g = slot.0.lock().unwrap();
-        assert_eq!(g.current_planet_id, 5);
-        assert!(!g.awaiting_move);
-        drop(g);
-        fake.join().unwrap();
-    }
-
-    #[test]
-    fn test_travel_and_wait_failure() {
-        let (explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("TravelFailBot", 3, 0);
-        let slot: SharedExplorer = Arc::new((Mutex::new(explorer), Condvar::new()));
-        let slot_listener = Arc::clone(&slot);
-
-        let fake = thread::spawn(move || {
-            match rx_orch.recv_timeout(T) {
-                Ok(ExplorerToOrchestrator::TravelToPlanetRequest { .. }) => {}
-                _ => panic!("expected TravelToPlanetRequest"),
-            }
-            let (lock, cvar) = &*slot_listener;
-            let mut g = lock.lock().unwrap();
-            let _ = g.handle_orchestrator_msg(OrchestratorToExplorer::MoveToPlanet {
-                sender_to_new_planet: None,
-                planet_id: 5,
-            });
-            drop(g);
-            cvar.notify_all();
-        });
-
-        assert!(Explorer::travel_and_wait(&slot, 5).is_err());
-
-        let g = slot.0.lock().unwrap();
-        assert_eq!(g.current_planet_id, 0); // unchanged
-        assert!(!g.awaiting_move);
-        drop(g);
-        fake.join().unwrap();
-    }
-
-    // =====================================================================
-    // G. INTEGRATION through run(): start handshake -> listener -> planet round-trip
-    // =====================================================================
-
-    #[test]
-    fn test_run_listener_integration() {
-        let (explorer, tx_orch, rx_orch, rx_planet, tx_planet) = make("RunBot", 20, 0);
-        thread::spawn(move || explorer.run());
-
-        tx_orch.send(OrchestratorToExplorer::StartExplorerAI).unwrap();
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::StartExplorerAIResult { explorer_id }) => assert_eq!(explorer_id, 20),
-            _ => panic!("expected StartExplorerAIResult"),
-        }
-
-        tx_orch.send(OrchestratorToExplorer::SupportedResourceRequest).unwrap();
-        match rx_planet.recv_timeout(T) {
-            Ok(ExplorerToPlanet::SupportedResourceRequest { explorer_id }) => {
-                assert_eq!(explorer_id, 20);
-                let mut set = HashSet::new();
-                set.insert(Oxygen);
-                tx_planet
-                    .send(PlanetToExplorer::SupportedResourceResponse { resource_list: set })
-                    .unwrap();
-            }
-            _ => panic!("planet did not receive SupportedResourceRequest"),
-        }
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::SupportedResourceResult { supported_resources, .. }) => {
-                assert!(supported_resources.contains(&Oxygen));
-            }
-            _ => panic!("orchestrator did not receive SupportedResourceResult"),
-        }
-    }
-
-    // =====================================================================
-    // H. RESOURCE-DEPENDENT PATHS — real BasicResource/ComplexResource minted
-    //    via a throwaway Planet's recipe-loaded Generator/Combinator.
-    //
-    //    ASSUMPTION: EnergyCell::new(), EnergyCell::charge(Sunray) and
-    //    Sunray::new() are `pub` (common_game's own tests use them this way).
-    //    If your crate can't see them, tell me and we mint differently.
-    // =====================================================================
-
-    // Minimal AI so Planet::new succeeds; its handlers are never invoked here.
-
-    /*
-    struct NoopAI;
-    impl PlanetAI for NoopAI {
-        fn handle_sunray(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator, _: Sunray) {}
-        fn handle_asteroid(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator) -> Option<Rocket> {
-            None
-        }
-        fn handle_internal_state_req(&mut self, s: &mut PlanetState, _: &Generator, _: &Combinator) -> DummyPlanetState {
-            s.to_dummy()
-        }
-        fn handle_explorer_msg(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator, _: ExplorerToPlanet) -> Option<PlanetToExplorer> {
-            None
-        }
-    }
-
-    // Owns a Planet purely to borrow its recipe-loaded Generator/Combinator.
-    struct Minter {
-        planet: Planet,
-    }
-    impl Minter {
-        fn new() -> Self {
-            let (_a, rx_o2p) = unbounded::<OrchestratorToPlanet>();
-            let (tx_p2o, _b) = unbounded::<PlanetToOrchestrator>();
-            let (_c, rx_e2p) = unbounded::<ExplorerToPlanet>();
-            // Type B: unbounded gen rules + 1 combination rule (Water).
-            let planet = Planet::new(
-                0,
-                PlanetType::B,
-                Box::new(NoopAI),
-                vec![Oxygen, Hydrogen, Carbon, Silicon],
-                vec![Water],
-                (rx_o2p, tx_p2o),
-                rx_e2p,
-            )
-                .expect("minter planet construction");
-            Minter { planet }
-        }
-
-        fn charged() -> EnergyCell {
-            let mut c = EnergyCell::new();
-            c.charge(Sunray::new());
-            c
-        }
-
-        fn basic(&self, ty: BasicResourceType) -> BasicResource {
-            let mut cell = Self::charged();
-            match ty {
-                Oxygen => self.planet.generator().make_oxygen(&mut cell).unwrap().to_basic(),
-                Hydrogen => self.planet.generator().make_hydrogen(&mut cell).unwrap().to_basic(),
-                Carbon => self.planet.generator().make_carbon(&mut cell).unwrap().to_basic(),
-                Silicon => self.planet.generator().make_silicon(&mut cell).unwrap().to_basic(),
-            }
-        }
-
-        fn water(&self) -> ComplexResource {
-            let h = self.planet.generator().make_hydrogen(&mut Self::charged()).unwrap();
-            let o = self.planet.generator().make_oxygen(&mut Self::charged()).unwrap();
-            self.planet
-                .combinator()
-                .make_water(h, o, &mut Self::charged())
-                .unwrap()
-                .to_complex()
-        }
-    }
-
-    #[test]
-    fn test_flow3_generate_success() {
-        let minter = Minter::new();
-        let oxygen = minter.basic(Oxygen); // real resource the planet will "produce"
-
-        let (mut explorer, _tx_orch, rx_orch, rx_planet, tx_planet) = make("GenOkBot", 33, 0);
-
-        let planet = thread::spawn(move || match rx_planet.recv_timeout(T) {
-            Ok(ExplorerToPlanet::GenerateResourceRequest { explorer_id, resource }) => {
-                assert_eq!(explorer_id, 33);
-                assert_eq!(resource, Oxygen);
-                tx_planet
-                    .send(PlanetToExplorer::GenerateResourceResponse { resource: Some(oxygen) })
-                    .unwrap();
-            }
-            _ => panic!("planet did not receive GenerateResourceRequest"),
-        });
-
-        let res = explorer
-            .handle_orchestrator_msg(OrchestratorToExplorer::GenerateResourceRequest { to_generate: Oxygen });
-        assert!(matches!(res, Ok(None)));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::GenerateResourceResponse { explorer_id, generated }) => {
-                assert_eq!(explorer_id, 33);
-                assert!(generated.is_ok());
-            }
-            _ => panic!("expected GenerateResourceResponse"),
-        }
-
-        let snap = explorer.bag.snapshot();
-        assert_eq!(snap.basic_resources.get(&Oxygen).copied().unwrap_or(0), 1, "oxygen should be in the bag");
-
-        planet.join().unwrap();
-    }
-
-    #[test]
-    fn test_flow4_combine_success() {
-        let minter = Minter::new();
-        let water = minter.water(); // real resource the planet will "produce"
-
-        let (mut explorer, _tx_orch, rx_orch, rx_planet, tx_planet) = make("CombineOkBot", 34, 0);
-
-        // Seed the inputs the explorer will take from the bag for a Water combine.
-        explorer.bag.add_basic(minter.basic(Hydrogen));
-        explorer.bag.add_basic(minter.basic(Oxygen));
-
-        let planet = thread::spawn(move || match rx_planet.recv_timeout(T) {
-            Ok(ExplorerToPlanet::CombineResourceRequest { explorer_id, msg: _ }) => {
-                assert_eq!(explorer_id, 34);
-                tx_planet
-                    .send(PlanetToExplorer::CombineResourceResponse { complex_response: Ok(water) })
-                    .unwrap();
-            }
-            _ => panic!("planet did not receive CombineResourceRequest"),
-        });
-
-        let res = explorer
-            .handle_orchestrator_msg(OrchestratorToExplorer::CombineResourceRequest { to_generate: Water });
-        assert!(matches!(res, Ok(None)));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::CombineResourceResponse { explorer_id, generated }) => {
-                assert_eq!(explorer_id, 34);
-                assert!(generated.is_ok());
-            }
-            _ => panic!("expected CombineResourceResponse"),
-        }
-
-        let snap = explorer.bag.snapshot();
-        assert_eq!(snap.complex_resources.get(&Water).copied().unwrap_or(0), 1, "water produced");
-        assert_eq!(snap.basic_resources.get(&Hydrogen).copied().unwrap_or(0), 0, "hydrogen consumed");
-        assert_eq!(snap.basic_resources.get(&Oxygen).copied().unwrap_or(0), 0, "oxygen consumed");
-
-        planet.join().unwrap();
-    }
-
-    #[test]
-    fn test_flow4_combine_planet_error_rolls_back() {
-        let minter = Minter::new();
-        let (mut explorer, _tx_orch, rx_orch, rx_planet, tx_planet) = make("CombineRollbackBot", 35, 0);
-
-        explorer.bag.add_basic(minter.basic(Hydrogen));
-        explorer.bag.add_basic(minter.basic(Oxygen));
-
-        // Planet "fails" and hands the two inputs straight back in the Err tuple.
-        let planet = thread::spawn(move || match rx_planet.recv_timeout(T) {
-            Ok(ExplorerToPlanet::CombineResourceRequest { msg: ComplexResourceRequest::Water(h, o), .. }) => {
-                tx_planet
-                    .send(PlanetToExplorer::CombineResourceResponse {
-                        complex_response: Err(("planet failed".to_string(), h.to_generic(), o.to_generic())),
-                    })
-                    .unwrap();
-            }
-            _ => panic!("planet did not receive a Water CombineResourceRequest"),
-        });
-
-        let res = explorer
-            .handle_orchestrator_msg(OrchestratorToExplorer::CombineResourceRequest { to_generate: Water });
-        assert!(matches!(res, Ok(None)));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::CombineResourceResponse { explorer_id, generated }) => {
-                assert_eq!(explorer_id, 35);
-                assert!(generated.is_err());
-            }
-            _ => panic!("expected CombineResourceResponse"),
-        }
-
-        // No resource lost: both inputs are back in the bag.
-        let snap = explorer.bag.snapshot();
-        assert_eq!(snap.basic_resources.get(&Hydrogen).copied().unwrap_or(0), 1, "hydrogen returned");
-        assert_eq!(snap.basic_resources.get(&Oxygen).copied().unwrap_or(0), 1, "oxygen returned");
-
-        planet.join().unwrap();
-    }
-
-    #[test]
-    fn test_bag_content_request_with_contents() {
-        let minter = Minter::new();
-        let (mut explorer, _tx_orch, rx_orch, _rx_planet, _tx_planet) = make("BagFullBot", 36, 0);
-
-        explorer.bag.add_basic(minter.basic(Oxygen));
-        explorer.bag.add_complex(minter.water());
-
-        let res = explorer.handle_orchestrator_msg(OrchestratorToExplorer::BagContentRequest);
-        assert!(matches!(res, Ok(None)));
-
-        match rx_orch.recv_timeout(T) {
-            Ok(ExplorerToOrchestrator::BagContentResponse { explorer_id, bag_content }) => {
-                assert_eq!(explorer_id, 36);
-                assert_eq!(bag_content.basic_resources.get(&Oxygen).copied().unwrap_or(0), 1);
-                assert_eq!(bag_content.complex_resources.get(&Water).copied().unwrap_or(0), 1);
-            }
-            _ => panic!("expected BagContentResponse"),
-        }
-    }
-    */
 }

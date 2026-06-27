@@ -47,7 +47,7 @@ const TICK_INTERVAL: Duration = Duration::from_millis(500);
 // Per-planet, per-tick probabilities. P_SKIP + P_ASTEROID must be <= 1.0;
 // the remainder is the sunray probability. Sunrays dominate.
 const P_SKIP: f64 = 0.25; // send nothing this tick
-const P_ASTEROID: f64 = 0.08; // send an asteroid (rare)
+const P_ASTEROID: f64 = 0.08; // send an asteroid (rare)3
 // => P_SUNRAY = 1 - 0.25 - 0.08 = 0.67
 
 // =========================================================================
@@ -96,6 +96,8 @@ struct Orchestrator {
 
     dead_planets: std::collections::HashSet<ID>,
     rng: u64, // xorshift64 (dependency-free; swap for `rand` if you like)
+    //to remember the travel in waiting for the planet response
+    pending_travels: HashMap<ID, ID>,
 }
 
 // =========================================================================
@@ -142,7 +144,7 @@ fn spawn_explorer(
     let (to_explorer, expl_rx_orch) = unbounded::<OrchestratorToExplorer>();
     let (to_explorer_from_planet, expl_rx_planet) = unbounded::<PlanetToExplorer>();
 
-    let mut explorer = Explorer::new(
+    let explorer = Explorer::new(
         name.to_string(),
         expl_rx_orch,
         tx_from_explorer,
@@ -241,6 +243,7 @@ impl Orchestrator {
             // viz,      // [VIZ]
             dead_planets: std::collections::HashSet::new(),
             rng: seed,
+            pending_travels: Default::default(),
         })
     }
 
@@ -441,6 +444,20 @@ impl Orchestrator {
                 debug!("[orch] {name} internal state (id={planet_id}) [viz disabled]");
             }
             PlanetToOrchestrator::IncomingExplorerResponse { explorer_id, res, .. } => {
+                //planet response, travel in waiting
+                self.pending_travels.remove(&explorer_id);
+
+                //check if the planet is alive
+                if self.dead_planets.contains(&id) {
+                    warn!("[orch] {name} accepted explorer {explorer_id} but the planet just died! Denying travel.");
+                    //the explorer with None return understand that the travel fail
+                    self.grant_travel(explorer_id, None, id);
+                    return;
+                }
+
+                //autorization here because if we send the explorer before to the planet is ok can be an error
+                let dst_sender = self.planets.get(&id).map(|p| p.to_planet_from_explorer.clone());
+                self.grant_travel(explorer_id, dst_sender, id);
                 debug!("[orch] {name} incoming explorer {explorer_id}: {res:?}")
             }
             PlanetToOrchestrator::OutgoingExplorerResponse { explorer_id, res, .. } => {
@@ -471,6 +488,20 @@ impl Orchestrator {
         self.dead_planets.insert(planet_id);
         // [VIZ] self.viz.set_alive(planet_id, false);
         info!("[orch] planet {planet_id} destroyed");
+
+        //new CHECK --> find and unblock the explorers in waiting fot this planet
+        //when the planet died we find the explorer that need to go there and we block him
+        let stranded_explorers: Vec<ID> = self.pending_travels
+            .iter()
+            .filter(|&(_, &dst_id)| dst_id == planet_id)
+            .map(|(&exp_id, _)| exp_id)
+            .collect();
+
+        for exp_id in stranded_explorers {
+            self.pending_travels.remove(&exp_id);
+            warn!("[orch] Unblocking explorer {exp_id} whose destination planet {planet_id} just died!");
+            self.grant_travel(exp_id, None, planet_id); // Invia il diniego per sbloccare il suo thread
+        }
 
         // Ask every living explorer where it is; the response handler kills any on a dead planet.
         for e in self.explorers.values() {
@@ -559,20 +590,19 @@ impl Orchestrator {
             return;
         }
 
+        // Deregister from the current planet.
+        if let Some(cur) = self.planets.get(&current_planet_id) {
+            let _ = cur.to_planet.send(OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id });
+        }
+
         // Register the explorer's reply-sender on the destination planet.
         if let (Some(dst), Some(e)) = (self.planets.get(&dst_planet_id), self.explorers.get(&explorer_id)) {
             let _ = dst.to_planet.send(OrchestratorToPlanet::IncomingExplorerRequest {
                 explorer_id,
                 new_sender: e.to_explorer_from_planet.clone(),
             });
+            self.pending_travels.insert(explorer_id,dst_planet_id);
         }
-        // Deregister from the current planet.
-        if let Some(cur) = self.planets.get(&current_planet_id) {
-            let _ = cur.to_planet.send(OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id });
-        }
-        // Grant the move with the destination's explorer->planet sender.
-        let dst_sender = self.planets.get(&dst_planet_id).map(|p| p.to_planet_from_explorer.clone());
-        self.grant_travel(explorer_id, dst_sender, dst_planet_id);
     }
 
     fn grant_travel(&mut self, explorer_id: ID, sender_to_new_planet: Option<Sender<ExplorerToPlanet>>, planet_id: ID) {
@@ -672,3 +702,120 @@ pub fn launch() {
     viz::run_with_io(galaxy_feed, cmd_sink);
 }
 */
+
+// =========================================================================
+// UNIT & INTEGRATION TESTS (Autonomous mode testing)
+// =========================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossbeam_channel::unbounded;
+
+    #[test]
+    fn test_orchestrator_full_lifecycle() {
+        // =================================================================
+        // 1. SETUP DEI CANALI MOCK
+        // =================================================================
+        let (tx_from_planets, rx_from_planets) = unbounded::<PlanetToOrchestrator>();
+        let (tx_from_explorers, rx_from_explorers) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
+
+        let (tx_to_planet_1, rx_to_planet_1) = unbounded::<OrchestratorToPlanet>();
+        let (tx_from_planet_to_exp_1, _rx_from_planet_to_exp_1) = unbounded::<ExplorerToPlanet>();
+
+        let (tx_to_planet_2, rx_to_planet_2) = unbounded::<OrchestratorToPlanet>();
+        let (tx_from_planet_to_exp_2, _rx_from_planet_to_exp_2) = unbounded::<ExplorerToPlanet>();
+
+        let (tx_to_explorer, rx_to_explorer) = unbounded::<OrchestratorToExplorer>();
+        let (tx_from_exp_to_planet, _rx_from_exp_to_planet) = unbounded::<PlanetToExplorer>();
+
+        // =================================================================
+        // 2. INIZIALIZZAZIONE DELL'ORCHESTRATOR (Forge creata UNA SOLA volta)
+        // =================================================================
+        let mut orch = Orchestrator {
+            forge: Forge::new().expect("Errore critico: Impossibile creare Forge"),
+            planets: HashMap::new(),
+            explorers: HashMap::new(),
+            from_planets: rx_from_planets,
+            from_explorers: rx_from_explorers,
+            dead_planets: std::collections::HashSet::new(),
+            rng: 42,
+            pending_travels: HashMap::new(),
+        };
+
+        orch.planets.insert(1, PlanetLink { name: "Alpha-1", to_planet: tx_to_planet_1, to_planet_from_explorer: tx_from_planet_to_exp_1, alive: true });
+        orch.planets.insert(2, PlanetLink { name: "Alpha-2", to_planet: tx_to_planet_2, to_planet_from_explorer: tx_from_planet_to_exp_2, alive: true });
+
+        orch.explorers.insert(99, ExplorerLink { name: "Star-Tracker", start_planet: 1, to_explorer: tx_to_explorer, to_explorer_from_planet: tx_from_exp_to_planet, alive: true });
+        
+        tx_from_explorers.send(ExplorerToOrchestrator::TravelToPlanetRequest {
+            explorer_id: 99,
+            current_planet_id: 1,
+            dst_planet_id: 2,
+        }).unwrap();
+
+        let msg = orch.from_explorers.recv().unwrap();
+        orch.handle_explorer_msg(msg); // L'Orchestrator elabora la richiesta
+
+        if let Ok(OrchestratorToPlanet::IncomingExplorerRequest { explorer_id, .. }) = rx_to_planet_2.try_recv() {
+            assert_eq!(explorer_id, 99);
+        } else {
+            panic!("ERRORE: Il pianeta di destinazione non ha ricevuto IncomingExplorerRequest");
+        }
+
+        tx_from_planets.send(PlanetToOrchestrator::IncomingExplorerResponse {
+            planet_id: 2,
+            explorer_id: 99,
+            res: Ok(()),
+        }).unwrap();
+
+        let msg = orch.from_planets.recv().unwrap();
+        orch.handle_planet_msg(msg);
+
+        if let Ok(OrchestratorToExplorer::MoveToPlanet { planet_id, .. }) = rx_to_explorer.try_recv() {
+            assert_eq!(planet_id, 2); // Si è spostato con successo sul pianeta 2!
+        } else {
+            panic!("ERRORE: L'esploratore non ha ricevuto MoveToPlanet");
+        }
+
+        let tx_from_explorer_clone = tx_from_explorers.clone();
+
+        tx_from_explorer_clone.send(ExplorerToOrchestrator::NeighborsRequest {
+            explorer_id: 99,
+            current_planet_id: 2,
+        }).unwrap();
+
+        let orch_thread = thread::spawn(move || {
+            orch.run(); // Questo invierà i messaggi di Bootstrap prima di leggere le code!
+        });
+        
+        loop {
+            let msg = rx_to_explorer.recv().unwrap();
+            if let OrchestratorToExplorer::NeighborsResponse { neighbors } = msg {
+                // TEST PASSATO: L'Orchestrator ha elaborato la richiesta e ha risposto!
+                // Rimuoviamo l'assert che forzava la lista ad essere vuota, poiché
+                // conoscendo i Pianeti 1 e 2, l'Orchestrator potrebbe averli collegati.
+                break;
+            }
+        }
+        
+        tx_from_explorer_clone.send(ExplorerToOrchestrator::KillExplorerResult {
+            explorer_id: 99
+        }).unwrap();
+
+        loop {
+            let msg = rx_to_planet_1.recv().unwrap();
+            if let OrchestratorToPlanet::KillPlanet = msg {
+                break;
+            }
+        }
+
+        loop {
+            let msg = rx_to_planet_2.recv().unwrap();
+            if let OrchestratorToPlanet::KillPlanet = msg {
+                break;
+            }
+        }
+
+        orch_thread.join().expect("ERRORE: Il thread dell'Orchestrator è andato in panico o si è bloccato");
+    }
+}

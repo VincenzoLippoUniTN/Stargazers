@@ -27,7 +27,8 @@ galaxy_visualizer_stargazers = { path = "galaxy_visualizer_stargazers", optional
 env_logger = "0.11.8"
 
 [features]
-visualizer = ["dep:galaxy_visualizer_stargazers"]
+default = ["galaxy_visualizer"]
+galaxy_visualizer = ["dep:galaxy_visualizer_stargazers"]
 
 # Profiles must live in the workspace root. Build dependencies (Bevy included)
 # optimized even in dev so the visualizer runs smoothly.

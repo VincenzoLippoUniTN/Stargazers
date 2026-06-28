@@ -25,6 +25,7 @@ crossbeam-channel = "0.5.15"
 # `cargo build` doesn't drag in Bevy. Enable it with `--features visualizer`.
 galaxy_visualizer_stargazers = { path = "galaxy_visualizer_stargazers", optional = true }
 env_logger = "0.11.8"
+rand = "0.8.6"
 
 [features]
 default = ["galaxy_visualizer"]

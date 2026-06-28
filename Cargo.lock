@@ -24,6 +24,7 @@ dependencies = [
  "immutable_cosmic_borrow",
  "log",
  "one-million-crabs",
+ "rand 0.8.6",
  "rusty-crab-ap2025",
  "the-compiler-strikes-back",
  "trip",

@@ -21,12 +21,10 @@ use common_game::utils::ID;
 // =========================================================================
 // INTERNAL MODULES
 // =========================================================================
-use crate::explorers::{harvesting_explorer, roaming_explorer, BagSnapshot, Explorer, ExplorerBehaviour};
-
-// [VIZ] disabled until the visualizer is ready ------------------------------
-// use crate::visualizer::{kind_of, VizBridge};
-// use galaxy_visualizer_stargazers::GalaxyCommand;
-// ---------------------------------------------------------------------------
+use crate::explorers::{harvesting_explorer, roaming_explorer, BagSnapshot, Eleanor, Explorer, ExplorerBehaviour};
+use crate::galaxy_layout::{build_galaxy, GalaxyLayout};
+use crate::visualizer::{kind_of, VizBridge};
+use galaxy_visualizer_stargazers::GalaxyCommand;
 
 // =========================================================================
 // PLANET CREATION ALIASES (group-specific constructors, kept as-is)
@@ -44,11 +42,20 @@ use rusty_crab_ap2025::planet::create_planet as new_ryc;
 // =========================================================================
 const TICK_INTERVAL: Duration = Duration::from_millis(500);
 
-// Per-planet, per-tick probabilities. P_SKIP + P_ASTEROID must be <= 1.0;
-// the remainder is the sunray probability. Sunrays dominate.
-const P_SKIP: f64 = 0.25; // send nothing this tick
-const P_ASTEROID: f64 = 0.08; // send an asteroid (rare)
-// => P_SUNRAY = 1 - 0.25 - 0.08 = 0.67
+/// Ticks before any asteroid is sent (10 ticks = 5 s).
+const WARMUP_TICKS: u32 = 10;
+
+/// Probability of skipping a planet entirely on a given tick.
+const P_SKIP: f64 = 0.25;
+
+/// Ceiling probability an asteroid is sent to a planet per tick.
+/// The actual probability ramps up from 0 using an exponential curve.
+const P_ASTEROID_MAX: f64 = 10.0;
+
+/// Exponential ramp rate. Tuned so the asteroid rate reaches ~2/s across
+/// all 7 planets roughly 2 minutes after the warmup ends.
+/// Formula: p(tick) = P_ASTEROID_MAX * (1 - exp(-K_RAMP * (tick - WARMUP_TICKS)))
+const K_RAMP: f64 = 0.00012740;
 
 // =========================================================================
 // PER-ACTOR OUTBOUND HANDLES
@@ -89,13 +96,20 @@ struct Orchestrator {
     from_planets: Receiver<PlanetToOrchestrator>,
     from_explorers: Receiver<ExplorerToOrchestrator<BagSnapshot>>,
 
-    // [VIZ] manual operations coming from the visualizer UI.
-    // commands: Receiver<GalaxyCommand>,
-    // [VIZ] snapshots out to the visualizer.
-    // viz: VizBridge,
+    /// Manual operations coming from the visualizer UI.
+    commands: Receiver<GalaxyCommand>,
+    /// Snapshots out to the visualizer.
+    viz: VizBridge,
 
     dead_planets: std::collections::HashSet<ID>,
     rng: u64, // xorshift64 (dependency-free; swap for `rand` if you like)
+    tick_count: u32,
+    /// Static galaxy graph: ring + random shortcuts, built once at startup.
+    galaxy: GalaxyLayout,
+    //to remember the travel in waiting for the planet response
+    pending_travels: HashMap<ID, ID>,
+
+    paused: bool,
 }
 
 // =========================================================================
@@ -142,7 +156,7 @@ fn spawn_explorer(
     let (to_explorer, expl_rx_orch) = unbounded::<OrchestratorToExplorer>();
     let (to_explorer_from_planet, expl_rx_planet) = unbounded::<PlanetToExplorer>();
 
-    let mut explorer = Explorer::new(
+    let explorer = Explorer::new(
         name.to_string(),
         expl_rx_orch,
         tx_from_explorer,
@@ -158,9 +172,7 @@ fn spawn_explorer(
 }
 
 impl Orchestrator {
-    // [VIZ] when re-enabling, restore the signature:
-    //     fn build(commands: Receiver<GalaxyCommand>, mut viz: VizBridge) -> Result<Orchestrator, String>
-    fn build() -> Result<Orchestrator, String> {
+    fn build(commands: Receiver<GalaxyCommand>, mut viz: VizBridge) -> Result<Orchestrator, String> {
         let forge = Forge::new()?;
 
         // ONE shared inbound receiver per actor family. Senders are cloned per actor.
@@ -168,25 +180,20 @@ impl Orchestrator {
         let (tx_from_explorer, from_explorers) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
 
         // --- Planets (group-specific constructors; adjust args to your tree) ---
-        let csb = spawn_planet("CSB", tx_from_planet.clone(), |rx, tx, rx_exp| new_csb(rx, tx, rx_exp, 1));
+        let csb = spawn_planet("CSB", tx_from_planet.clone(), |rx, tx, rx_exp|
+            new_csb(rx, tx, rx_exp, 1));
         let hus = spawn_planet("HUS", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_hus(rx, tx, rx_exp, 2, RocketStrategy::Safe, None).expect("Failed to create HUS")
-        });
+            new_hus(rx, tx, rx_exp, 2, RocketStrategy::Safe, None).expect("Failed to create HUS") });
         let omc = spawn_planet("OMC", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_omc(rx, tx, rx_exp, 3).expect("Failed to create OMC")
-        });
+            new_omc(rx, tx, rx_exp, 3).expect("Failed to create OMC") });
         let bas = spawn_planet("BAS", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_bas(rx, tx, rx_exp, 4).expect("Failed to create BAS")
-        });
+            new_bas(rx, tx, rx_exp, 4).expect("Failed to create BAS") });
         let trp = spawn_planet("TRP", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_trp(5, rx, tx, rx_exp).expect("Failed to create TRP")
-        });
+            new_trp(5, rx, tx, rx_exp).expect("Failed to create TRP") });
         let icb = spawn_planet("ICB", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_icb(false, 1.0, 1.0, Duration::from_secs(60), Duration::from_secs(10), 6, (rx, tx), rx_exp)
-                .expect("Failed to create ICB")
-        });
-        // Last clone moves in (no further planets need it).
-        let ryc = spawn_planet("RYC", tx_from_planet, |rx, tx, rx_exp| new_ryc(rx, tx, rx_exp, 7));
+            new_icb(false, 1.0, 1.0, Duration::from_secs(60), Duration::from_secs(10), 6, (rx, tx), rx_exp).expect("Failed to create ICB") });
+        let ryc = spawn_planet("RYC", tx_from_planet, |rx, tx, rx_exp|
+            new_ryc(rx, tx, rx_exp, 7));
 
         let mut planets = HashMap::new();
         planets.insert(1, csb);
@@ -205,25 +212,28 @@ impl Orchestrator {
             roaming_explorer,
         );
         let eleanor = spawn_explorer(
-            "Eleanor", 102, 2,
+            "Eleanor", 102, 4,
             tx_from_explorer, // last clone moves in
-            planets[&2].to_planet_from_explorer.clone(),
-            harvesting_explorer,
+            planets[&4].to_planet_from_explorer.clone(),
+            |ai| {
+                let mut eleanor = Eleanor::new(ai);
+                eleanor.run();
+            },
         );
 
         let mut explorers = HashMap::new();
         explorers.insert(101, anon);
         explorers.insert(102, eleanor);
 
-        // [VIZ] register planets with the visualizer (kinds known from how we built them).
-        // use common_game::components::planet::PlanetType;
-        // viz.register_planet(1, kind_of(PlanetType::A));
-        // viz.register_planet(2, kind_of(PlanetType::B));
-        // viz.register_planet(3, kind_of(PlanetType::C));
-        // viz.register_planet(4, kind_of(PlanetType::D));
-        // viz.register_planet(5, kind_of(PlanetType::A));
-        // viz.register_planet(6, kind_of(PlanetType::B));
-        // viz.register_planet(7, kind_of(PlanetType::C));
+
+        use common_game::components::planet::PlanetType;
+        viz.register_planet(1, kind_of(PlanetType::C));
+        viz.register_planet(2, kind_of(PlanetType::A));
+        viz.register_planet(3, kind_of(PlanetType::D));
+        viz.register_planet(4, kind_of(PlanetType::D));
+        viz.register_planet(5, kind_of(PlanetType::A));
+        viz.register_planet(6, kind_of(PlanetType::C));
+        viz.register_planet(7, kind_of(PlanetType::C));
 
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -231,16 +241,32 @@ impl Orchestrator {
             .unwrap_or(0x9E37_79B9_7F4A_7C15)
             | 1;
 
+        // Build the galaxy graph with the same seed so it's reproducible
+        // for a given run. The edges are sent in every snapshot so the
+        // visualizer draws the real connections.
+        let galaxy = build_galaxy(7, seed);
+
+        for (&id, p) in &planets {
+            info!("[build] planet id={id} name={}", p.name);
+        }
+        for (&id, e) in &explorers {
+            info!("[build] explorer id={id} name={} start_planet={}", e.name, e.start_planet);
+        }
+
         Ok(Orchestrator {
             forge,
             planets,
             explorers,
             from_planets,
             from_explorers,
-            // commands, // [VIZ]
-            // viz,      // [VIZ]
+            commands,
+            viz,
             dead_planets: std::collections::HashSet::new(),
             rng: seed,
+            tick_count: 0,
+            galaxy,
+            pending_travels: Default::default(),
+            paused: false,
         })
     }
 
@@ -254,17 +280,17 @@ impl Orchestrator {
         loop {
             // Clone receivers into locals so the select borrows the locals, not
             // `self`; that lets each arm body call `&mut self` handlers freely.
-            // let commands = self.commands.clone(); // [VIZ]
+            let commands = self.commands.clone();
             let from_explorers = self.from_explorers.clone();
             let from_planets = self.from_planets.clone();
             let tick_rx = ticker.clone();
 
             select_biased! {
-                // ---- PRIORITY 1: visualizer / user commands ---- [VIZ]
-                // recv(commands) -> msg => match msg {
-                //     Ok(cmd) => self.handle_command(cmd),
-                //     Err(_) => { info!("[orch] visualizer command channel closed; shutting down"); break; }
-                // },
+                // ---- PRIORITY 1: visualizer / user commands ----
+                recv(commands) -> msg => match msg {
+                    Ok(cmd) => self.handle_command(cmd),
+                    Err(_) => { info!("[orch] visualizer command channel closed; shutting down"); break; }
+                },
 
                 // ---- PRIORITY 2: actor messages (explorers, then planets) ----
                 recv(from_explorers) -> msg => match msg {
@@ -310,6 +336,12 @@ impl Orchestrator {
                 let _ = p.to_planet.send(OrchestratorToPlanet::IncomingExplorerRequest { explorer_id, new_sender });
             }
         }
+        // Seed the visualizer: galaxy edges + explorer starting positions.
+        self.viz.set_edges(self.galaxy.edges.clone());
+        for (&id, e) in &self.explorers {
+            self.viz.set_explorer(id, e.start_planet);
+        }
+        let _ = self.viz.publish();
     }
 
     fn shutdown(&mut self) {
@@ -323,13 +355,12 @@ impl Orchestrator {
                 let _ = e.to_explorer.send(OrchestratorToExplorer::KillExplorer);
             }
         }
+        let _ = self.viz.publish(); // push final state before exiting
     }
 
     // =====================================================================
-    // [VIZ] VISUALIZER COMMANDS (manual ops == the same paths the AI uses)
-    // Re-enable together with the `commands` field, import, and run-loop arm.
+    // VISUALIZER COMMANDS (manual ops == the same paths the AI uses)
     // =====================================================================
-    /*
     fn handle_command(&mut self, cmd: GalaxyCommand) {
         match cmd {
             GalaxyCommand::Sunray { planet_id } => {
@@ -340,13 +371,28 @@ impl Orchestrator {
                 let asteroid = self.forge.generate_asteroid();
                 self.send_to_planet(planet_id, OrchestratorToPlanet::Asteroid(asteroid));
             }
-            GalaxyCommand::SetAi { planet_id, running } => {
-                let msg = if running {
-                    OrchestratorToPlanet::StartPlanetAI
-                } else {
-                    OrchestratorToPlanet::StopPlanetAI
-                };
-                self.send_to_planet(planet_id, msg);
+            GalaxyCommand::SetAi { planet_id: _, running } => {
+                self.paused = !running;
+                for p in self.planets.values() {
+                    if p.alive {
+                        let msg = if running {
+                            OrchestratorToPlanet::StartPlanetAI
+                        } else {
+                            OrchestratorToPlanet::StopPlanetAI
+                        };
+                        let _ = p.to_planet.send(msg);
+                    }
+                }
+                for e in self.explorers.values() {
+                    if e.alive {
+                        let msg = if running {
+                            OrchestratorToExplorer::StartExplorerAI
+                        } else {
+                            OrchestratorToExplorer::StopExplorerAI
+                        };
+                        let _ = e.to_explorer.send(msg);
+                    }
+                }
             }
             GalaxyCommand::Kill { planet_id } => self.begin_planet_destruction(planet_id),
             GalaxyCommand::MoveExplorer { explorer_id, to_planet } => {
@@ -356,36 +402,44 @@ impl Orchestrator {
                     self.grant_travel(explorer_id, None, to_planet);
                 }
             }
-            // ---- These require the visualizer team to ADD these variants ----
-            // GalaxyCommand::KillExplorer { explorer_id } => self.begin_explorer_kill(explorer_id),
-            // GalaxyCommand::SupportedResources { explorer_id } =>
-            //     self.send_to_explorer(explorer_id, OrchestratorToExplorer::SupportedResourceRequest),
-            // GalaxyCommand::SupportedCombinations { explorer_id } =>
-            //     self.send_to_explorer(explorer_id, OrchestratorToExplorer::SupportedCombinationRequest),
-            // GalaxyCommand::Generate { explorer_id, resource } =>
-            //     self.send_to_explorer(explorer_id, OrchestratorToExplorer::GenerateResourceRequest { to_generate: resource }),
-            // GalaxyCommand::Combine { explorer_id, resource } =>
-            //     self.send_to_explorer(explorer_id, OrchestratorToExplorer::CombineResourceRequest { to_generate: resource }),
-            // GalaxyCommand::BagContent { explorer_id } =>
-            //     self.send_to_explorer(explorer_id, OrchestratorToExplorer::BagContentRequest),
-            #[allow(unreachable_patterns)]
-            _ => debug!("[orch] unhandled visualizer command: {cmd:?}"),
+            GalaxyCommand::KillExplorer { explorer_id } => self.begin_explorer_kill(explorer_id),
+            GalaxyCommand::SupportedResources { explorer_id } =>
+                self.send_to_explorer(explorer_id, OrchestratorToExplorer::SupportedResourceRequest),
+            GalaxyCommand::SupportedCombinations { explorer_id } =>
+                self.send_to_explorer(explorer_id, OrchestratorToExplorer::SupportedCombinationRequest),
+            GalaxyCommand::Generate { explorer_id, resource } =>
+                self.send_to_explorer(explorer_id, OrchestratorToExplorer::GenerateResourceRequest { to_generate: resource }),
+            GalaxyCommand::Combine { explorer_id, resource } =>
+                self.send_to_explorer(explorer_id, OrchestratorToExplorer::CombineResourceRequest { to_generate: resource }),
+            GalaxyCommand::BagContent { explorer_id } =>
+                self.send_to_explorer(explorer_id, OrchestratorToExplorer::BagContentRequest),
         }
     }
-    */
 
     // =====================================================================
-    // TICK — entropic sunrays/asteroids ( + [VIZ] publish a fresh view )
+    // TICK — entropic sunrays/asteroids + publish a fresh view
     // =====================================================================
     /// Returns `true` if the loop should terminate.
     fn handle_tick(&mut self) -> bool {
+        if self.paused {
+            let _ = self.viz.publish();
+            return false;
+        }
         // 1. Entropic weather.
+        self.tick_count += 1;
+        let p_asteroid = if self.tick_count <= WARMUP_TICKS {
+            0.0 // grace period: no asteroids
+        } else {
+            let dt = (self.tick_count - WARMUP_TICKS) as f64;
+            P_ASTEROID_MAX * (1.0 - (-K_RAMP * dt).exp())
+        };
+
         let alive_ids: Vec<ID> = self.planets.iter().filter(|(_, p)| p.alive).map(|(&id, _)| id).collect();
         for id in alive_ids {
             let r = self.roll();
             if r < P_SKIP {
                 continue;
-            } else if r < P_SKIP + P_ASTEROID {
+            } else if r < P_SKIP + p_asteroid {
                 let asteroid = self.forge.generate_asteroid();
                 self.send_to_planet(id, OrchestratorToPlanet::Asteroid(asteroid));
             } else {
@@ -394,23 +448,23 @@ impl Orchestrator {
             }
         }
 
-        // [VIZ] 2. Refresh the view: poll planet state + explorer positions.
-        // for p in self.planets.values() {
-        //     if p.alive {
-        //         let _ = p.to_planet.send(OrchestratorToPlanet::InternalStateRequest);
-        //     }
-        // }
-        // for e in self.explorers.values() {
-        //     if e.alive {
-        //         let _ = e.to_explorer.send(OrchestratorToExplorer::CurrentPlanetRequest);
-        //     }
-        // }
+        // 2. Refresh the view: poll planet state + explorer positions.
+        for p in self.planets.values() {
+            if p.alive {
+                let _ = p.to_planet.send(OrchestratorToPlanet::InternalStateRequest);
+            }
+        }
+        for e in self.explorers.values() {
+            if e.alive {
+                let _ = e.to_explorer.send(OrchestratorToExplorer::CurrentPlanetRequest);
+            }
+        }
 
-        // [VIZ] 3. Publish. `false` => the window closed.
-        // if !self.viz.publish() {
-        //     info!("[orch] visualizer window closed; shutting down");
-        //     return true;
-        // }
+        // 3. Publish. `false` => the window closed.
+        if !self.viz.publish() {
+            info!("[orch] visualizer window closed; shutting down");
+            return true;
+        }
         false
     }
 
@@ -436,11 +490,24 @@ impl Orchestrator {
             PlanetToOrchestrator::StopPlanetAIResult { .. } | PlanetToOrchestrator::Stopped { .. } => {
                 debug!("[orch] {name} stopped / ack-while-stopped")
             }
-            PlanetToOrchestrator::InternalStateResponse { planet_id, planet_state: _ } => {
-                // [VIZ] self.viz.update_planet(planet_id, &planet_state);
-                debug!("[orch] {name} internal state (id={planet_id}) [viz disabled]");
+            PlanetToOrchestrator::InternalStateResponse { planet_id, planet_state } => {
+                self.viz.update_planet(planet_id, &planet_state);
             }
             PlanetToOrchestrator::IncomingExplorerResponse { explorer_id, res, .. } => {
+                //planet response, travel in waiting
+                self.pending_travels.remove(&explorer_id);
+
+                //check if the planet is alive
+                if self.dead_planets.contains(&id) {
+                    warn!("[orch] {name} accepted explorer {explorer_id} but the planet just died! Denying travel.");
+                    //the explorer with None return understand that the travel fail
+                    self.grant_travel(explorer_id, None, id);
+                    return;
+                }
+
+                //autorization here because if we send the explorer before to the planet is ok can be an error
+                let dst_sender = self.planets.get(&id).map(|p| p.to_planet_from_explorer.clone());
+                self.grant_travel(explorer_id, dst_sender, id);
                 debug!("[orch] {name} incoming explorer {explorer_id}: {res:?}")
             }
             PlanetToOrchestrator::OutgoingExplorerResponse { explorer_id, res, .. } => {
@@ -458,7 +525,7 @@ impl Orchestrator {
         }
     }
 
-    /// Planet confirmed dead: mark it, ( [VIZ] tell the view, ) and probe explorers
+    /// Planet confirmed dead: mark it, tell the view, and probe explorers
     /// so any colocated ones get killed (we never track location; we ask).
     fn finalize_planet_death(&mut self, planet_id: ID) {
         let still_alive = self.planets.get(&planet_id).map(|p| p.alive).unwrap_or(false);
@@ -469,8 +536,22 @@ impl Orchestrator {
             p.alive = false;
         }
         self.dead_planets.insert(planet_id);
-        // [VIZ] self.viz.set_alive(planet_id, false);
+        self.viz.set_alive(planet_id, false);
         info!("[orch] planet {planet_id} destroyed");
+
+        //new CHECK --> find and unblock the explorers in waiting for this planet
+        //when the planet died we find the explorer that need to go there and we block him
+        let stranded_explorers: Vec<ID> = self.pending_travels
+            .iter()
+            .filter(|&(_, &dst_id)| dst_id == planet_id)
+            .map(|(&exp_id, _)| exp_id)
+            .collect();
+
+        for exp_id in stranded_explorers {
+            self.pending_travels.remove(&exp_id);
+            warn!("[orch] Unblocking explorer {exp_id} whose destination planet {planet_id} just died!");
+            self.grant_travel(exp_id, None, planet_id);
+        }
 
         // Ask every living explorer where it is; the response handler kills any on a dead planet.
         for e in self.explorers.values() {
@@ -490,7 +571,9 @@ impl Orchestrator {
 
         match msg {
             ExplorerToOrchestrator::CurrentPlanetResult { explorer_id, planet_id } => {
-                // [VIZ] self.viz.set_explorer(explorer_id, planet_id);
+                if self.explorers.get(&explorer_id).map(|e| e.alive).unwrap_or(false) {
+                    self.viz.set_explorer(explorer_id, planet_id);
+                }
                 if self.dead_planets.contains(&planet_id) {
                     info!("[orch] explorer {explorer_id} is on dead planet {planet_id} -> killing");
                     self.begin_explorer_kill(explorer_id);
@@ -532,6 +615,7 @@ impl Orchestrator {
     }
 
     fn finalize_explorer_death(&mut self, explorer_id: ID) {
+        info!("[orch] finalize_explorer_death called for {explorer_id}");
         if let Some(e) = self.explorers.get_mut(&explorer_id) {
             if !e.alive {
                 return;
@@ -539,7 +623,7 @@ impl Orchestrator {
             e.alive = false;
             info!("[orch] explorer {} killed", e.name);
         }
-        // [VIZ] self.viz.remove_explorer(explorer_id);
+        self.viz.remove_explorer(explorer_id);
     }
 
     fn all_explorers_dead(&self) -> bool {
@@ -549,14 +633,16 @@ impl Orchestrator {
     // =====================================================================
     // TRAVEL (shared by autonomous TravelToPlanetRequest and manual MoveExplorer)
     // =====================================================================
-    /// Fire-and-forget travel grant. Does NOT wait for Incoming/Outgoing acks
-    /// before granting (small race; sequence on IncomingExplorerResponse for
-    /// production). Easy to replace.
     fn handle_travel_request(&mut self, explorer_id: ID, current_planet_id: ID, dst_planet_id: ID) {
         let dst_alive = self.planets.get(&dst_planet_id).map(|p| p.alive).unwrap_or(false);
         if !dst_alive {
             self.grant_travel(explorer_id, None, dst_planet_id); // deny: None sender
             return;
+        }
+
+        // Deregister from the current planet.
+        if let Some(cur) = self.planets.get(&current_planet_id) {
+            let _ = cur.to_planet.send(OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id });
         }
 
         // Register the explorer's reply-sender on the destination planet.
@@ -565,14 +651,8 @@ impl Orchestrator {
                 explorer_id,
                 new_sender: e.to_explorer_from_planet.clone(),
             });
+            self.pending_travels.insert(explorer_id, dst_planet_id);
         }
-        // Deregister from the current planet.
-        if let Some(cur) = self.planets.get(&current_planet_id) {
-            let _ = cur.to_planet.send(OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id });
-        }
-        // Grant the move with the destination's explorer->planet sender.
-        let dst_sender = self.planets.get(&dst_planet_id).map(|p| p.to_planet_from_explorer.clone());
-        self.grant_travel(explorer_id, dst_sender, dst_planet_id);
     }
 
     fn grant_travel(&mut self, explorer_id: ID, sender_to_new_planet: Option<Sender<ExplorerToPlanet>>, planet_id: ID) {
@@ -601,17 +681,17 @@ impl Orchestrator {
         }
     }
 
-    // [VIZ] only used by the manual MoveExplorer command.
-    // fn explorer_current_planet_guess(&self, explorer_id: ID) -> Option<ID> {
-    //     self.explorers.get(&explorer_id).map(|e| e.start_planet)
-    // }
+    fn explorer_current_planet_guess(&self, explorer_id: ID) -> Option<ID> {
+        self.explorers.get(&explorer_id).map(|e| e.start_planet)
+    }
 
-    /// TODO: real adjacency graph. Stub: every other living planet is reachable.
+    /// Returns the neighbours of `planet_id` that are still alive,
+    /// using the static galaxy graph built at startup.
     fn neighbors_of(&self, planet_id: ID) -> Vec<ID> {
-        self.planets
-            .iter()
-            .filter(|&(&id, p)| p.alive && id != planet_id)
-            .map(|(&id, _)| id)
+        self.galaxy
+            .neighbors_of(planet_id)
+            .into_iter()
+            .filter(|id| self.planets.get(id).map(|p| p.alive).unwrap_or(false))
             .collect()
     }
 
@@ -630,34 +710,20 @@ impl Orchestrator {
 }
 
 // =========================================================================
-// ENTRY POINT (visualizer-free)
+// ENTRY POINT
 //
-// Runs the whole simulation on the calling thread. Terminates when all explorers
-// are dead (or, as a backstop, when the shared explorer channel disconnects).
+// The Orchestrator is the father of all actors and runs the whole simulation.
+// The visualizer only needs the MAIN THREAD (a windowing requirement), so the
+// orchestrator runs on a spawned thread and `main` lends the main thread to the
+// window. The orchestrator still owns/decides everything; the window closing is
+// just another channel-disconnect event it observes.
 // =========================================================================
-pub fn run_orchestrator() {
-    match Orchestrator::build() {
-        Ok(mut o) => o.run(),
-        Err(e) => error!("[orch] creation failed: {e}"),
-    }
-}
-
-// =========================================================================
-// [VIZ] ENTRY POINT WITH VISUALIZER (re-enable when the visualizer is ready)
-//
-// The Orchestrator stays the father of all actors; the visualizer only needs
-// the MAIN THREAD (a windowing requirement), so the orchestrator runs on a
-// spawned thread and `main` lends the main thread to the window.
-// =========================================================================
-/*
 pub fn launch() {
     use galaxy_visualizer_stargazers as viz;
 
     let (galaxy_sender, galaxy_feed) = viz::galaxy_channel();
     let (cmd_sink, cmd_source) = viz::command_channel();
 
-    // Needs a crossbeam Receiver<GalaxyCommand> exposed by the visualizer crate, e.g.:
-    //     let commands: Receiver<GalaxyCommand> = cmd_source.into_receiver();
     let commands: Receiver<GalaxyCommand> = cmd_source.into_receiver();
 
     thread::spawn(move || {
@@ -671,4 +737,126 @@ pub fn launch() {
     // Main thread is lent to the window; blocks until it closes.
     viz::run_with_io(galaxy_feed, cmd_sink);
 }
-*/
+
+// =========================================================================
+// UNIT & INTEGRATION TESTS (Autonomous mode testing)
+// =========================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossbeam_channel::unbounded;
+
+    #[test]
+    fn test_orchestrator_full_lifecycle() {
+        // =================================================================
+        // 1. SETUP DEI CANALI MOCK
+        // =================================================================
+        let (tx_from_planets, rx_from_planets) = unbounded::<PlanetToOrchestrator>();
+        let (tx_from_explorers, rx_from_explorers) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
+
+        let (tx_to_planet_1, rx_to_planet_1) = unbounded::<OrchestratorToPlanet>();
+        let (tx_from_planet_to_exp_1, _rx_from_planet_to_exp_1) = unbounded::<ExplorerToPlanet>();
+
+        let (tx_to_planet_2, rx_to_planet_2) = unbounded::<OrchestratorToPlanet>();
+        let (tx_from_planet_to_exp_2, _rx_from_planet_to_exp_2) = unbounded::<ExplorerToPlanet>();
+
+        let (tx_to_explorer, rx_to_explorer) = unbounded::<OrchestratorToExplorer>();
+        let (tx_from_exp_to_planet, _rx_from_exp_to_planet) = unbounded::<PlanetToExplorer>();
+
+        // =================================================================
+        // 2. INIZIALIZZAZIONE DELL'ORCHESTRATOR (Forge creata UNA SOLA volta)
+        // =================================================================
+        let mut orch = Orchestrator {
+            forge: Forge::new().expect("Errore critico: Impossibile creare Forge"),
+            planets: HashMap::new(),
+            explorers: HashMap::new(),
+            from_planets: rx_from_planets,
+            from_explorers: rx_from_explorers,
+            // The test doesn't use the visualizer or commands; create dummy channels.
+            commands: crossbeam_channel::never(),
+            viz: {
+                let (sender, _feed) = galaxy_visualizer_stargazers::galaxy_channel();
+                VizBridge::new(sender)
+            },
+            dead_planets: std::collections::HashSet::new(),
+            rng: 42,
+            tick_count: 0,
+            galaxy: build_galaxy(2, 42), // minimal graph for the 2-planet test
+            pending_travels: HashMap::new(),
+            paused: false,
+        };
+
+        orch.planets.insert(1, PlanetLink { name: "Alpha-1", to_planet: tx_to_planet_1, to_planet_from_explorer: tx_from_planet_to_exp_1, alive: true });
+        orch.planets.insert(2, PlanetLink { name: "Alpha-2", to_planet: tx_to_planet_2, to_planet_from_explorer: tx_from_planet_to_exp_2, alive: true });
+
+        orch.explorers.insert(99, ExplorerLink { name: "Star-Tracker", start_planet: 1, to_explorer: tx_to_explorer, to_explorer_from_planet: tx_from_exp_to_planet, alive: true });
+
+        tx_from_explorers.send(ExplorerToOrchestrator::TravelToPlanetRequest {
+            explorer_id: 99,
+            current_planet_id: 1,
+            dst_planet_id: 2,
+        }).unwrap();
+
+        let msg = orch.from_explorers.recv().unwrap();
+        orch.handle_explorer_msg(msg); // L'Orchestrator elabora la richiesta
+
+        if let Ok(OrchestratorToPlanet::IncomingExplorerRequest { explorer_id, .. }) = rx_to_planet_2.try_recv() {
+            assert_eq!(explorer_id, 99);
+        } else {
+            panic!("ERRORE: Il pianeta di destinazione non ha ricevuto IncomingExplorerRequest");
+        }
+
+        tx_from_planets.send(PlanetToOrchestrator::IncomingExplorerResponse {
+            planet_id: 2,
+            explorer_id: 99,
+            res: Ok(()),
+        }).unwrap();
+
+        let msg = orch.from_planets.recv().unwrap();
+        orch.handle_planet_msg(msg);
+
+        if let Ok(OrchestratorToExplorer::MoveToPlanet { planet_id, .. }) = rx_to_explorer.try_recv() {
+            assert_eq!(planet_id, 2); // Si è spostato con successo sul pianeta 2!
+        } else {
+            panic!("ERRORE: L'esploratore non ha ricevuto MoveToPlanet");
+        }
+
+        let tx_from_explorer_clone = tx_from_explorers.clone();
+
+        tx_from_explorer_clone.send(ExplorerToOrchestrator::NeighborsRequest {
+            explorer_id: 99,
+            current_planet_id: 2,
+        }).unwrap();
+
+        let orch_thread = thread::spawn(move || {
+            orch.run(); // Questo invierà i messaggi di Bootstrap prima di leggere le code!
+        });
+
+        loop {
+            let msg = rx_to_explorer.recv().unwrap();
+            if let OrchestratorToExplorer::NeighborsResponse { neighbors: _ } = msg {
+                break;
+            }
+        }
+
+        tx_from_explorer_clone.send(ExplorerToOrchestrator::KillExplorerResult {
+            explorer_id: 99
+        }).unwrap();
+
+        loop {
+            let msg = rx_to_planet_1.recv().unwrap();
+            if let OrchestratorToPlanet::KillPlanet = msg {
+                break;
+            }
+        }
+
+        loop {
+            let msg = rx_to_planet_2.recv().unwrap();
+            if let OrchestratorToPlanet::KillPlanet = msg {
+                break;
+            }
+        }
+
+        orch_thread.join().expect("ERRORE: Il thread dell'Orchestrator è andato in panico o si è bloccato");
+    }
+}

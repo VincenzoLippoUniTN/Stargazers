@@ -50,6 +50,7 @@ pub struct Explorer {
     /// `self` (which then gets moved whole into the shared `Mutex`).
     behaviour: Option<Box<dyn FnOnce(AI) + Send + 'static>>,
     killed: bool,
+    stopped: bool,
 }
 
 impl Explorer {
@@ -79,6 +80,7 @@ impl Explorer {
             awaiting_neighbors: false,
             behaviour: Some(Box::new(behaviour)),
             killed: false,
+            stopped: false,
         }
     }
 
@@ -657,9 +659,8 @@ impl Explorer {
     }
 
     // On START/STOP/KILL methods
-    // (Not needed in the current state of the program, but it's good to have them wired for future changes)
-    fn on_start (&self) { /* TODO */ }
-    fn on_stop (&self) { /* TODO */ }
+    fn on_stop(&mut self) { self.stopped = true; }
+    fn on_start(&mut self) { self.stopped = false; }
     fn on_kill (&mut self) {
         self.killed = true;
         self.awaiting_move = false;
@@ -953,6 +954,10 @@ impl AI {
     pub(crate) fn is_killed(&self) -> bool {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().killed
+    }
+    pub(crate) fn is_stopped(&self) -> bool {
+        let (lock, _) = &*self.slot;
+        lock.lock().unwrap().stopped
     }
 
     // ---- planet round-trips: lock, &mut self method, unlock ----

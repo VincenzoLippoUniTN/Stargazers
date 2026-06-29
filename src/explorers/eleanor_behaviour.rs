@@ -97,9 +97,11 @@ impl Eleanor {
 
     pub fn run(&mut self) {
         while !self.ai.is_killed() {
+            while self.ai.is_stopped() { std::thread::sleep(std::time::Duration::from_millis(1000)); }
             self.knowledge_state = self.decide();
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+        println!("[Eleanor] Bweh..."); // TODO
     }
 
     fn decide(&mut self) -> KnowledgeState {
@@ -207,6 +209,7 @@ impl Eleanor {
                         Ok(()) => {
                             self.knowledge.inventory = self.ai.bag();
                             self.objectives.pop();
+                            println!("[Eleanor] Combined {:?}", resource); // TODO
                         }
                         Err(_) => { /* retry next tick */ }
                     }

@@ -51,6 +51,7 @@ pub struct Explorer {
     behaviour: Option<Box<dyn FnOnce(AI) + Send + 'static>>,
     killed: bool,
     stopped: bool,
+    reset_requested: bool,
 }
 
 impl Explorer {
@@ -81,6 +82,7 @@ impl Explorer {
             behaviour: Some(Box::new(behaviour)),
             killed: false,
             stopped: false,
+            reset_requested: false,
         }
     }
 
@@ -424,8 +426,7 @@ impl Explorer {
         self.current_combination_cookbook = HashSet::new();
         self.current_neighbors = Vec::new();
 
-        // TODO: Clear out any other simulation baselines if needed
-        // (For example, if you track traveled distance, energy spent, or a score, you would zero them out here).
+        self.reset_requested = true;
 
         self.log_internal(
             Channel::Debug,
@@ -958,6 +959,13 @@ impl AI {
     pub(crate) fn is_stopped(&self) -> bool {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().stopped
+    }
+    pub(crate) fn take_reset(&self) -> bool {
+        let (lock, _) = &*self.slot;
+        let mut g = lock.lock().unwrap();
+        let was_requested = g.reset_requested;
+        g.reset_requested = false;  // consume it so it only fires once
+        was_requested
     }
 
     // ---- planet round-trips: lock, &mut self method, unlock ----

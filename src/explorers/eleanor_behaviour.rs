@@ -98,6 +98,8 @@ impl Eleanor {
     pub fn run(&mut self) {
         while !self.ai.is_killed() {
             while self.ai.is_stopped() { std::thread::sleep(std::time::Duration::from_millis(1000)); }
+            if self.ai.take_reset() { self.reset(); }
+
             self.knowledge_state = self.decide();
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
@@ -438,5 +440,19 @@ impl Eleanor {
                     .map_or(true, |info| !info.is_fully_known())
             })
             .or_else(|| neighbours.first())
+    }
+
+    // -------------------------------------------------------------------------
+    // RESET ELEANOR
+    // -------------------------------------------------------------------------
+
+    fn reset(&mut self) {
+        self.knowledge = ExplorerKnowledge {
+            current_planet: self.ai.current_planet(),
+            inventory: self.ai.bag(),
+            ..Default::default()
+        };
+        self.knowledge_state = KnowledgeState::Unknowing;
+        self.objectives.clear();
     }
 }

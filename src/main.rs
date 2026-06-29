@@ -1,9 +1,9 @@
 mod orchestrator;
-mod explorer;
-mod first_explorer;
-#[cfg(feature = "visualizer")]
 mod visualizer;
+mod explorers;
+mod galaxy_layout;
 
 fn main() {
-    println!("Hello world!");
+    env_logger::init();
+    orchestrator::launch();
 }

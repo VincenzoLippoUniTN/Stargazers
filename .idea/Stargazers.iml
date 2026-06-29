@@ -4,6 +4,8 @@
     <content url="file://$MODULE_DIR$">
       <sourceFolder url="file://$MODULE_DIR$/StargazersPlanet/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/galaxy_visualizer_stargazers/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/ex/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/StargazersPlanet/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
       <excludeFolder url="file://$MODULE_DIR$/Library/target" />

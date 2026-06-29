@@ -24,9 +24,12 @@ crossbeam-channel = "0.5.15"
 # The 3D visualizer is vendored in this repo but kept optional, so a normal
 # `cargo build` doesn't drag in Bevy. Enable it with `--features visualizer`.
 galaxy_visualizer_stargazers = { path = "galaxy_visualizer_stargazers", optional = true }
+env_logger = "0.11.8"
+rand = "0.8.6"
 
 [features]
-visualizer = ["dep:galaxy_visualizer_stargazers"]
+default = ["galaxy_visualizer"]
+galaxy_visualizer = ["dep:galaxy_visualizer_stargazers"]
 
 # Profiles must live in the workspace root. Build dependencies (Bevy included)
 # optimized even in dev so the visualizer runs smoothly.

@@ -154,6 +154,10 @@ impl VizBridge {
 
         self.sender.send(snapshot).is_ok()
     }
+
+    pub fn remove_explorer(&mut self, id: ID) {
+        self.explorers.remove(&id);
+    }
 }
 
 impl PlanetView {

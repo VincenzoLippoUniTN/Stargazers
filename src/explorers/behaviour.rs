@@ -12,11 +12,9 @@
 //! `crate::explorer::AI`). For this to compile, `AI` and its methods are
 //! `pub(crate)` in the explorer module.
 
-use std::ops::Index;
 use std::thread;
 use std::time::Duration;
 
-use common_game::components::resource::{BasicResourceType, ComplexResourceType};
 use common_game::logging::Channel;
 use rand::Rng;
 use super::explorer::AI;

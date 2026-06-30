@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use rand::Rng;
 
 use common_game::components::planet::PlanetType;
 use common_game::components::resource::{BasicResourceType, ComplexResourceType};
@@ -9,6 +10,9 @@ use common_game::utils::ID;
 use crate::explorers::BagSnapshot;
 use crate::explorers::explorer::AI;
 
+const FORGET_CHANCE_PER_TICK: f64 = 0.02; // how often an amnesia attempt fires
+const FORGET_FIELD_CHANCE:    f64 = 0.2;  // per-fact drop chance; lower = rarer, and less likely to drop >1
+
 #[derive(Debug, Clone)]
 struct PlanetInfo {
     gen_recipes: Option<HashSet<BasicResourceType>>,
@@ -18,7 +22,7 @@ struct PlanetInfo {
 }
 
 impl PlanetInfo {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             gen_recipes:  None,
             comb_recipes: None,
@@ -28,16 +32,32 @@ impl PlanetInfo {
     }
 
     // --- Convenience queries ---
-    pub fn can_generate(&self, r: &BasicResourceType) -> bool { self.gen_recipes.as_ref().map_or(false, |s| s.contains(r)) }
-    pub fn can_combine(&self, r: &ComplexResourceType) -> bool { self.comb_recipes.as_ref().map_or(false, |s| s.contains(r)) }
-    pub fn is_fully_known(&self) -> bool {
+    fn can_generate(&self, r: &BasicResourceType) -> bool { self.gen_recipes.as_ref().map_or(false, |s| s.contains(r)) }
+    fn can_combine(&self, r: &ComplexResourceType) -> bool { self.comb_recipes.as_ref().map_or(false, |s| s.contains(r)) }
+    fn is_fully_known(&self) -> bool {
         self.gen_recipes.is_some()
             && self.comb_recipes.is_some()
             && self.kind.is_some()
             && self.neighbours.is_some()
     }
+    fn is_dangerous(&self) -> bool {
+        matches!(self.kind, Some(PlanetType::B) | Some(PlanetType::D))
+    }
+    fn forget_random(&mut self, rng: &mut impl Rng, id: ID) {
+        let mut forgotten = String::new();
+        if rng.gen_bool(FORGET_FIELD_CHANCE) { self.gen_recipes  = None; forgotten += "generation recipes, "; }
+        if rng.gen_bool(FORGET_FIELD_CHANCE) { self.comb_recipes = None; forgotten += "combination recipes, "; }
+        if rng.gen_bool(FORGET_FIELD_CHANCE) { self.neighbours   = None; forgotten += "neighbours, "; }
+        // Kind can't be forgotten by choice. It would be inefficient for the marginal use it has to forget and recompute it,
+        // so I leave it alone. Let's say Eleanor's brain doesn't struggle as much to remember useless info
 
-    // pub fn forget(&mut self) { *self = Self::new(); }
+        if forgotten.is_empty() { return; }
+
+        let forgotten = forgotten.trim_end_matches(", ");
+        println!("[Eleanor] amnesia on planet {:?}: forgot {}", id, forgotten);
+        // debug!("[Eleanor] amnesia on planet {:?}: forgot {}", id, forgotten);
+    }
+    // fn forget(&mut self) { *self = Self::new(); }
 }
 
 // --- States & Knowledge ------------------
@@ -100,6 +120,7 @@ impl Eleanor {
             while self.ai.is_stopped() { std::thread::sleep(std::time::Duration::from_millis(1000)); }
             if self.ai.take_reset() { self.reset(); }
 
+            self.maybe_forget();
             self.knowledge_state = self.decide();
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
@@ -413,6 +434,37 @@ impl Eleanor {
     }
 
     // -------------------------------------------------------------------------
+    // RESET ELEANOR & FORGET INFO
+    // -------------------------------------------------------------------------
+
+    fn reset(&mut self) {
+        self.knowledge = ExplorerKnowledge {
+            current_planet: self.ai.current_planet(),
+            inventory: self.ai.bag(),
+            ..Default::default()
+        };
+        self.knowledge_state = KnowledgeState::Unknowing;
+        self.objectives.clear();
+    }
+
+    fn maybe_forget(&mut self) {
+        let mut rng = rand::thread_rng();
+        if !rng.gen_bool(FORGET_CHANCE_PER_TICK) { return; }
+
+        let ids: Vec<ID> = self.knowledge.planets_info.keys().copied().collect();
+        if ids.is_empty() { return; }
+        let victim = ids[rng.gen_range(0..ids.len())];
+
+        if let Some(info) = self.knowledge.planets_info.get_mut(&victim) {
+            info.forget_random(&mut rng, victim);
+        }
+
+        if victim == self.knowledge.current_planet {
+            self.knowledge_state = KnowledgeState::Amnesiac;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // HELPERS
     // -------------------------------------------------------------------------
 
@@ -421,8 +473,16 @@ impl Eleanor {
     }
 
     fn find_planet_that_generates(&self, r: &BasicResourceType) -> Option<&ID> {
-        self.knowledge.planets_info.iter()
-            .find_map(|(id, info)| info.can_generate(r).then_some(id))
+        // Prefer a safe generator; fall back to a B/D one only if it's the only
+        // place that makes the resource.
+        let mut dangerous_fallback = None;
+        for (id, info) in self.knowledge.planets_info.iter() {
+            if info.can_generate(r) {
+                if info.is_dangerous() { dangerous_fallback.get_or_insert(id); }
+                else { return Some(id); }
+            }
+        }
+        dangerous_fallback
     }
 
     fn find_planet_that_combines(&self, r: &ComplexResourceType) -> Option<&ID> {
@@ -440,19 +500,5 @@ impl Eleanor {
                     .map_or(true, |info| !info.is_fully_known())
             })
             .or_else(|| neighbours.first())
-    }
-
-    // -------------------------------------------------------------------------
-    // RESET ELEANOR
-    // -------------------------------------------------------------------------
-
-    fn reset(&mut self) {
-        self.knowledge = ExplorerKnowledge {
-            current_planet: self.ai.current_planet(),
-            inventory: self.ai.bag(),
-            ..Default::default()
-        };
-        self.knowledge_state = KnowledgeState::Unknowing;
-        self.objectives.clear();
     }
 }

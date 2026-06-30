@@ -1,7 +1,7 @@
 // =========================================================================
 // STANDARD LIBRARY & EXTERNAL CRATES
 // =========================================================================
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,7 +21,7 @@ use common_game::utils::ID;
 // =========================================================================
 // INTERNAL MODULES
 // =========================================================================
-use crate::explorers::{harvesting_explorer, roaming_explorer, BagSnapshot, Eleanor, Explorer, ExplorerBehaviour};
+use crate::explorers::{roaming_explorer, BagSnapshot, Eleanor, Explorer, ExplorerBehaviour};
 use crate::galaxy_layout::{build_galaxy, GalaxyLayout};
 use crate::visualizer::{kind_of, VizBridge};
 use galaxy_visualizer_stargazers::GalaxyCommand;
@@ -108,6 +108,7 @@ struct Orchestrator {
     galaxy: GalaxyLayout,
     //to remember the travel in waiting for the planet response
     pending_travels: HashMap<ID, ID>,
+    transit_at:      HashMap<ID, ID>,
 
     paused: bool,
 }
@@ -266,6 +267,7 @@ impl Orchestrator {
             tick_count: 0,
             galaxy,
             pending_travels: Default::default(),
+            transit_at: Default::default(),
             paused: false,
         })
     }
@@ -460,6 +462,7 @@ impl Orchestrator {
             }
         }
 
+        self.advance_journeys();
         // 3. Publish. `false` => the window closed.
         if !self.viz.publish() {
             info!("[orch] visualizer window closed; shutting down");
@@ -549,6 +552,7 @@ impl Orchestrator {
 
         for exp_id in stranded_explorers {
             self.pending_travels.remove(&exp_id);
+            self.transit_at.remove(&exp_id); // also abandon any in-progress walk to it
             warn!("[orch] Unblocking explorer {exp_id} whose destination planet {planet_id} just died!");
             self.grant_travel(exp_id, None, planet_id);
         }
@@ -571,7 +575,9 @@ impl Orchestrator {
 
         match msg {
             ExplorerToOrchestrator::CurrentPlanetResult { explorer_id, planet_id } => {
-                if self.explorers.get(&explorer_id).map(|e| e.alive).unwrap_or(false) {
+                // While walking, advance_journeys owns the marker; don't overwrite it.
+                let walking = self.transit_at.contains_key(&explorer_id);
+                if !walking && self.explorers.get(&explorer_id).map(|e| e.alive).unwrap_or(false) {
                     self.viz.set_explorer(explorer_id, planet_id);
                 }
                 if self.dead_planets.contains(&planet_id) {
@@ -636,22 +642,44 @@ impl Orchestrator {
     fn handle_travel_request(&mut self, explorer_id: ID, current_planet_id: ID, dst_planet_id: ID) {
         let dst_alive = self.planets.get(&dst_planet_id).map(|p| p.alive).unwrap_or(false);
         if !dst_alive {
-            self.grant_travel(explorer_id, None, dst_planet_id); // deny: None sender
+            self.grant_travel(explorer_id, None, dst_planet_id); // deny
             return;
         }
 
-        // Deregister from the current planet.
+        // Already there: register immediately, no walk.
+        if current_planet_id == dst_planet_id {
+            self.pending_travels.insert(explorer_id, dst_planet_id);
+            self.finalize_arrival(explorer_id, dst_planet_id);
+            return;
+        }
+
+        // dst is alive but earlier deaths may have severed the graph.
+        if self.path_next_hop(current_planet_id, dst_planet_id).is_none() {
+            self.grant_travel(explorer_id, None, dst_planet_id); // strand: unreachable
+            return;
+        }
+
+        // Leave the source now; the per-tick walker handles hops + the destination
+        // registration on arrival. No grant yet — the explorer stays blocked.
         if let Some(cur) = self.planets.get(&current_planet_id) {
             let _ = cur.to_planet.send(OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id });
         }
+        self.pending_travels.insert(explorer_id, dst_planet_id); // final dst (death-stranding)
+        self.transit_at.insert(explorer_id, current_planet_id);  // marker position
+    }
 
-        // Register the explorer's reply-sender on the destination planet.
+    /// Register the explorer's reply-sender on the destination; the planet's
+    /// `IncomingExplorerResponse` then issues the actual grant (existing path,
+    /// line 496) and clears `pending_travels`.
+    fn finalize_arrival(&mut self, explorer_id: ID, dst_planet_id: ID) {
         if let (Some(dst), Some(e)) = (self.planets.get(&dst_planet_id), self.explorers.get(&explorer_id)) {
             let _ = dst.to_planet.send(OrchestratorToPlanet::IncomingExplorerRequest {
                 explorer_id,
                 new_sender: e.to_explorer_from_planet.clone(),
             });
-            self.pending_travels.insert(explorer_id, dst_planet_id);
+        } else {
+            self.pending_travels.remove(&explorer_id);
+            self.grant_travel(explorer_id, None, dst_planet_id); // defensive: don't hang
         }
     }
 
@@ -660,6 +688,61 @@ impl Orchestrator {
             explorer_id,
             OrchestratorToExplorer::MoveToPlanet { sender_to_new_planet, planet_id },
         );
+    }
+
+    /// Next hop from `from` toward `to` on a shortest alive path, or None if
+    /// already there or unreachable. `neighbors_of` already excludes dead planets.
+    fn path_next_hop(&self, from: ID, to: ID) -> Option<ID> {
+        if from == to { return None; }
+        let mut visited = HashSet::from([from]);
+        let mut queue: VecDeque<(ID, ID)> = VecDeque::new(); // (node, first_hop_on_its_path)
+        for n in self.neighbors_of(from) {
+            if n == to { return Some(n); }
+            visited.insert(n);
+            queue.push_back((n, n));
+        }
+        while let Some((node, first)) = queue.pop_front() {
+            for n in self.neighbors_of(node) {
+                if n == to { return Some(first); }
+                if visited.insert(n) { queue.push_back((n, first)); }
+            }
+        }
+        None
+    }
+
+    fn advance_journeys(&mut self) {
+        let travelers: Vec<ID> = self.transit_at.keys().copied().collect();
+        for exp_id in travelers {
+            // Explorer died (e.g. its source planet blew up) -> abandon the journey.
+            if !self.explorers.get(&exp_id).map(|e| e.alive).unwrap_or(false) {
+                self.transit_at.remove(&exp_id);
+                self.pending_travels.remove(&exp_id);
+                continue;
+            }
+            let at = match self.transit_at.get(&exp_id) { Some(&a) => a, None => continue };
+            let dst = match self.pending_travels.get(&exp_id) {
+                Some(&d) => d,
+                None => { self.transit_at.remove(&exp_id); continue; } // dst death cleared it
+            };
+
+            match self.path_next_hop(at, dst) {
+                Some(next) => {
+                    self.transit_at.insert(exp_id, next);
+                    self.viz.set_explorer(exp_id, next); // cosmetic step
+                    if next == dst {
+                        self.transit_at.remove(&exp_id);
+                        self.finalize_arrival(exp_id, dst); // arrived -> register -> grant
+                    }
+                }
+                None => {
+                    // at != dst and no route: destination got cut off. Strand.
+                    self.transit_at.remove(&exp_id);
+                    self.pending_travels.remove(&exp_id);
+                    warn!("[orch] explorer {exp_id} can no longer reach planet {dst}; stranding");
+                    self.grant_travel(exp_id, None, dst);
+                }
+            }
+        }
     }
 
     // =====================================================================
@@ -783,6 +866,7 @@ mod tests {
             tick_count: 0,
             galaxy: build_galaxy(2, 42), // minimal graph for the 2-planet test
             pending_travels: HashMap::new(),
+            transit_at: HashMap::new(),
             paused: false,
         };
 

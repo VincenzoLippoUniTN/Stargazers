@@ -62,6 +62,7 @@ pub fn roaming_explorer(ai: AI) {
 
 /// HOMEBODY — never travels. Sits on its starting planet and farms it as hard as
 /// it can. Good for the "steady production" instance.
+#[allow(dead_code)]
 pub fn harvesting_explorer(ai: AI) {
     let mut consecutive_failures = 0u32;
     const GIVE_UP_AFTER: u32 = 5;

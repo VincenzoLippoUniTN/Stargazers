@@ -43,7 +43,6 @@ use galaxy_visualizer_stargazers as viz;
 use viz::{ExplorerSnapshot, GalaxySender, GalaxySnapshot, PlanetKind, PlanetSnapshot};
 
 // Re-exported so the orchestrator can pull the whole visualizer surface from here.
-pub use viz::{command_channel, galaxy_channel, run_with_io, CommandSource, GalaxyCommand};
 
 /// Maps a `common-game` planet type to the visualizer's neutral kind.
 pub fn kind_of(planet_type: PlanetType) -> PlanetKind {

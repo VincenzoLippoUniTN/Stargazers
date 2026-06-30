@@ -79,6 +79,7 @@ impl Bag {
     }
 
     /// Convenience method to take out any resource using the unified `ResourceType`.
+    #[allow(dead_code)]
     pub(crate) fn take_generic(&mut self, resource_type: ResourceType) -> Option<GenericResource> {
         match resource_type {
             ResourceType::Basic(b_type) => self.take_basic(b_type).map(GenericResource::BasicResources),
@@ -89,11 +90,13 @@ impl Bag {
     // --- UTILITY METHODS ---
 
     /// Checks if the bag contains at least one basic resource of the specified type.
+    #[allow(dead_code)]
     pub(crate) fn contains_basic(&self, resource_type: BasicResourceType) -> bool {
         self.basic_counts.get(&resource_type).copied().unwrap_or(0) > 0
     }
 
     /// Checks if the bag contains at least one complex resource of the specified type.
+    #[allow(dead_code)]
     pub(crate) fn contains_complex(&self, resource_type: ComplexResourceType) -> bool {
         self.complex_counts.get(&resource_type).copied().unwrap_or(0) > 0
     }

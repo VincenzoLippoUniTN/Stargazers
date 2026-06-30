@@ -97,7 +97,7 @@ fn animate_explorers(time: Res<Time>, state: Res<GameState>, mut q: Query<(&mut 
     for (mut tf, mut ex) in &mut q {
         match ex.target {
             Some(target) => {
-                ex.progress += dt * 3.0; // was 0.35 — finish each arc in ~0.33s, inside the 500ms hop window
+                ex.progress += dt * 2.5; // was 0.35 — finish each arc in ~0.33s, inside the 500ms hop window
                 let (Some(from), Some(to)) = (state.positions.get(ex.at), state.positions.get(target))
                 else {
                     continue;

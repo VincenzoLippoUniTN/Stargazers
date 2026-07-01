@@ -1,2 +1,3 @@
-/target
+# Rust build output, at the workspace root or in any member crate.
+target/
 .DS_Store

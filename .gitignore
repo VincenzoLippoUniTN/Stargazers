@@ -1,3 +1,4 @@
 # Rust build output, at the workspace root or in any member crate.
-target/
+/target
+.idea
 .DS_Store

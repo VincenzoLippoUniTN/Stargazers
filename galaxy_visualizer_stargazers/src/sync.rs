@@ -32,7 +32,8 @@ fn ingest_feed(
     feed: Option<Res<GalaxyFeed>>,
     mut state: ResMut<GameState>,
     mut planets: Query<&mut Planet>,
-    mut explorers: Query<&mut Explorer>,
+    mut explorers: Query<(Entity, &mut Explorer)>,
+    mut commands: Commands,
 ) {
     let Some(feed) = feed else {
         return;
@@ -63,9 +64,24 @@ fn ingest_feed(
         let Some(target) = state.index_of(reported.at_planet) else {
             continue;
         };
-        for mut ex in &mut explorers {
+        for (_entity, mut ex) in &mut explorers {
             if ex.id == reported.id && ex.at != target && ex.target.is_none() {
                 ex.target = Some(target);
+            }
+        }
+    }
+
+    // Despawn explorers the simulation no longer reports. A snapshot is a *full*
+    // picture of the galaxy, and the producer drops an explorer from it only when
+    // that explorer dies (see `VizBridge::remove_explorer`). So any live entity
+    // whose id is absent from the snapshot has died and must leave the screen —
+    // including the very last one, whose death yields an empty explorer list.
+    for (entity, ex) in &explorers {
+        let still_present = snapshot.explorers.iter().any(|r| r.id == ex.id);
+        if !still_present {
+            commands.entity(entity).despawn_recursive();
+            if state.selected_explorer == Some(ex.id) {
+                state.selected_explorer = None;
             }
         }
     }

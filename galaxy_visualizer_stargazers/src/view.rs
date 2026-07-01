@@ -2,6 +2,7 @@
 
 use bevy::prelude::*;
 
+use crate::command::{BASIC_CHOICES, COMPLEX_CHOICES};
 use crate::domain::components::{Explorer, Hud, MainCamera, Planet};
 use crate::domain::state::{GameState, Mode, Source};
 
@@ -87,8 +88,18 @@ fn update_hud(
             .map(|e| e.id)
             .collect();
 
-        t.sections[1].value = format!(
-            "{}\nEnergy: {}/{}  |  Rocket: {}  |  Element: {}\nExplorers: {:?}{}{}",
+        // Which explorer manual explorer-ops target, and what Generate/Combine
+        // will craft, so the user can see the current selection before acting.
+        let selected = match state.selected_explorer {
+            Some(id) => id.to_string(),
+            None => "none".to_string(),
+        };
+        let next_basic = format!("{:?}", BASIC_CHOICES[state.basic_choice % BASIC_CHOICES.len()]);
+        let next_complex =
+            format!("{:?}", COMPLEX_CHOICES[state.complex_choice % COMPLEX_CHOICES.len()]);
+
+        let mut body = format!(
+            "{}\nEnergy: {}/{}  |  Rocket: {}  |  Element: {}\nExplorers: {:?}{}{}\nSelected explorer: {}  |  AI: {}\nGenerate: {}  |  Combine: {}",
             p.planet_type.info(),
             charged,
             p.cells_charged.len(),
@@ -97,6 +108,18 @@ fn update_hud(
             here,
             if p.alive { "" } else { "  [DESTROYED]" },
             if state.paused { "  [PAUSED]" } else { "" },
+            selected,
+            if state.ai_paused { "paused" } else { "running" },
+            next_basic,
+            next_complex,
         );
+
+        // The report panel: answers to the user's last query (bag, recipes, ...).
+        if !state.reports.is_empty() {
+            body.push_str("\n----\n");
+            body.push_str(&state.reports.join("\n"));
+        }
+
+        t.sections[1].value = body;
     }
 }

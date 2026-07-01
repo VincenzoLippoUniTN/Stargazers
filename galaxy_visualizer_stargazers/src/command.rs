@@ -26,6 +26,8 @@ pub enum GalaxyCommand {
     MoveExplorer { explorer_id: u32, to_planet: u32 },
     /// Kill an explorer immediately.
     KillExplorer { explorer_id: u32 },
+    /// Reset an explorer's AI (wipes its learned knowledge / restarts it).
+    ResetExplorer { explorer_id: u32 },
     /// Ask what basic resources the explorer's current planet supports.
     SupportedResources { explorer_id: u32 },
     /// Ask what combination recipes the explorer's current planet supports.
@@ -37,6 +39,26 @@ pub enum GalaxyCommand {
     /// Ask the explorer to report its bag contents.
     BagContent { explorer_id: u32 },
 }
+
+/// The basic resources a user can pick for a [`GalaxyCommand::Generate`], in the
+/// order the UI cycles through them. Kept here so the enum and the UI agree.
+pub const BASIC_CHOICES: [BasicResourceType; 4] = [
+    BasicResourceType::Oxygen,
+    BasicResourceType::Hydrogen,
+    BasicResourceType::Carbon,
+    BasicResourceType::Silicon,
+];
+
+/// The complex resources a user can pick for a [`GalaxyCommand::Combine`], in the
+/// order the UI cycles through them.
+pub const COMPLEX_CHOICES: [ComplexResourceType; 6] = [
+    ComplexResourceType::Water,
+    ComplexResourceType::Diamond,
+    ComplexResourceType::Life,
+    ComplexResourceType::Robot,
+    ComplexResourceType::Dolphin,
+    ComplexResourceType::AIPartner,
+];
 
 /// Creates a connected sink/source pair. Hand the [`CommandSink`] to
 /// [`crate::run_with_io`] and keep the [`CommandSource`] on the producer side.

@@ -5,6 +5,7 @@
 //!
 //! - [`mod@feed`] — the data contract *out* ([`GalaxySnapshot`] and friends).
 //! - [`mod@command`] — the contract *in* ([`GalaxyCommand`]) for manual operations.
+//! - [`mod@report`] — the contract *out* ([`GalaxyReport`]) for query answers.
 //! - `domain` — planet types, ECS components, world state and galaxy layout.
 //! - `scene` — builds the 3D world from a layout.
 //! - `sync` — reconciles the world with incoming snapshots.
@@ -13,14 +14,16 @@
 //! - `view` — camera and HUD.
 //!
 //! Use [`run`] for a self-contained random demo, [`run_with_feed`] to drive the
-//! scene from live snapshots, or [`run_with_io`] to also let the UI send manual
-//! [`GalaxyCommand`]s back to the producer.
+//! scene from live snapshots, [`run_with_io`] to also let the UI send manual
+//! [`GalaxyCommand`]s back to the producer, or [`run_with_reports`] to *also*
+//! receive [`GalaxyReport`] answers (bag contents, recipe lists) to show them.
 
 mod command;
 mod domain;
 mod feed;
 mod interaction;
 mod motion;
+mod report;
 mod scene;
 mod sync;
 mod view;
@@ -34,6 +37,7 @@ pub use feed::{
     galaxy_channel, ExplorerSnapshot, GalaxyFeed, GalaxySender, GalaxySnapshot, PlanetKind,
     PlanetSnapshot,
 };
+pub use report::{report_channel, GalaxyReport, ReportFeed, ReportSender};
 
 /// Ordering of the per-frame data pipeline: pull the latest snapshot, build the
 /// scene if needed, then map the resulting state onto the entities' appearance.
@@ -78,7 +82,7 @@ impl Plugin for GalaxyVisualizerPlugin {
 
 /// Runs the visualizer as a self-contained demo with a random galaxy.
 pub fn run() {
-    build_app(None, None).run();
+    build_app(None, None, None).run();
 }
 
 /// Runs the visualizer driven by snapshots arriving on `feed`.
@@ -86,16 +90,27 @@ pub fn run() {
 /// Must be called from the main thread (a windowing requirement), so launch any
 /// data producer on a background thread first.
 pub fn run_with_feed(feed: GalaxyFeed) {
-    build_app(Some(feed), None).run();
+    build_app(Some(feed), None, None).run();
 }
 
 /// Like [`run_with_feed`], but the UI also emits manual [`GalaxyCommand`]s through
 /// `commands` for the producer to act on.
 pub fn run_with_io(feed: GalaxyFeed, commands: CommandSink) {
-    build_app(Some(feed), Some(commands)).run();
+    build_app(Some(feed), Some(commands), None).run();
 }
 
-fn build_app(feed: Option<GalaxyFeed>, commands: Option<CommandSink>) -> App {
+/// Like [`run_with_io`], but also drains [`GalaxyReport`]s off `reports` and shows
+/// the latest one in the HUD — this is what lets a user *see* an explorer's bag
+/// or a planet's recipe list after asking for it.
+pub fn run_with_reports(feed: GalaxyFeed, commands: CommandSink, reports: ReportFeed) {
+    build_app(Some(feed), Some(commands), Some(reports)).run();
+}
+
+fn build_app(
+    feed: Option<GalaxyFeed>,
+    commands: Option<CommandSink>,
+    reports: Option<ReportFeed>,
+) -> App {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -115,6 +130,10 @@ fn build_app(feed: Option<GalaxyFeed>, commands: Option<CommandSink>) -> App {
 
     if let Some(commands) = commands {
         app.insert_resource(commands);
+    }
+
+    if let Some(reports) = reports {
+        app.insert_resource(reports);
     }
 
     app

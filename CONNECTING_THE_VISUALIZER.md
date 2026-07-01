@@ -187,13 +187,65 @@ fn handle_command(forge: &Forge, channels: &PlanetChannels, cmd: GalaxyCommand) 
 }
 ```
 
-Today the UI's buttons emit `Sunray` (the "Sun ray" button / `S`) and
-`MoveExplorer` (the "Explorer" button / `E`); the other view buttons (mode, focus,
-zoom, pause) are client-side only and never reach you. The `GalaxyCommand` enum
-also carries `Asteroid`, `SetAi` and `Kill` for whatever buttons you add later.
+The UI now has a button *and* a keyboard shortcut for **every** operation a user
+can perform, all routed through one `dispatch` so a click and a keypress do the
+exact same thing. The full `GalaxyCommand` surface:
 
-In demo mode (no command sink) those same buttons just animate locally, so the
-standalone demo keeps working without a backend.
+| Command | Button / key | Target |
+|---------|--------------|--------|
+| `Sunray` | Sun ray `S` | focused planet |
+| `Asteroid` | Asteroid `A` | focused planet |
+| `Kill` | Kill planet `K` | focused planet |
+| `SetAi` | Toggle AI `I` | whole simulation |
+| `MoveExplorer` | Move explorer `E` | selected explorer |
+| `KillExplorer` | Kill explorer `J` | selected explorer |
+| `ResetExplorer` | Reset explorer `R` | selected explorer |
+| `BagContent` | Bag `B` | selected explorer |
+| `SupportedResources` | Resources `1` | selected explorer |
+| `SupportedCombinations` | Combines `2` | selected explorer |
+| `Generate` | Basic+ `N` to pick, Generate `G` | selected explorer |
+| `Combine` | Complex+ `M` to pick, Combine `C` | selected explorer |
+
+The view controls (mode `P`, focus `←`/`→`, zoom, pause `Space`) stay client-side
+and never reach you. Pick which explorer the explorer-ops act on with **Sel
+explorer `X`** (it cycles through the live explorers; the first is auto-selected).
+
+In demo mode (no command sink) the operations that make sense animate locally and
+the rest are no-ops, so the standalone demo keeps working without a backend.
+
+## 4. Query answers (the report channel)
+
+`Sunray`/`Asteroid`/`Kill`/`Move` change the galaxy, so their result shows up on
+the next **snapshot**. But the *query* commands — `BagContent`,
+`SupportedResources`, `SupportedCombinations`, and the outcome of
+`Generate`/`Combine` — ask a question a snapshot can't answer (a snapshot only
+describes physical galaxy state, not an explorer's inventory or a planet's recipe
+list). Those answers come back on a separate **report** channel and are shown in
+the HUD.
+
+Use `run_with_reports` instead of `run_with_io` and keep the matching
+`ReportSender` on the orchestrator side:
+
+```rust
+use galaxy_visualizer_stargazers as viz;
+
+let (sender, feed)      = viz::galaxy_channel();  // snapshots: orchestrator -> view
+let (sink, commands)    = viz::command_channel(); // commands:  view -> orchestrator
+let (reports, feed_rep) = viz::report_channel();  // answers:   orchestrator -> view
+
+std::thread::spawn(move || {
+    // ...build the orchestrator with `commands` and `reports`, then your loop...
+    // When an explorer replies with its bag / recipe list, forward it:
+    //   reports.send(viz::GalaxyReport::Bag { explorer_id, basic, complex });
+});
+
+viz::run_with_reports(feed, sink, feed_rep); // blocks until the window closes
+```
+
+`GalaxyReport` carries pre-formatted strings, so the visualizer never needs to
+know your resource or bag types. The orchestrator maps each explorer result
+(`BagContentResponse`, `SupportedResourceResult`, …) to the matching
+`GalaxyReport` variant.
 
 ## What the visualizer shows
 
@@ -202,7 +254,9 @@ standalone demo keeps working without a backend.
 - **Rocket** appears when `DummyPlanetState.has_rocket` is `true`.
 - **Dead planets** disappear once you call `set_alive(id, false)`.
 - **Explorers** present when the galaxy is first built fly between planets as you
-  update them with `set_explorer`.
+  update them with `set_explorer`. An explorer **disappears** as soon as it stops
+  being reported in a snapshot — so call `remove_explorer(id)` when one dies and
+  it leaves the screen on the next `publish()`.
 
 The **first** snapshot fixes the layout (planet count, ids and kinds); later
 snapshots only change the dynamic state. Register every planet — and record any

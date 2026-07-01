@@ -350,7 +350,9 @@ fn spawn_ui(cmd: &mut Commands) {
                 padding: UiRect::all(Val::Px(10.0)),
                 flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::Center,
+                flex_wrap: FlexWrap::Wrap,
                 column_gap: Val::Px(8.0),
+                row_gap: Val::Px(6.0),
                 ..default()
             },
             background_color: Color::srgba(0.0, 0.0, 0.0, 0.5).into(),
@@ -361,7 +363,7 @@ fn spawn_ui(cmd: &mut Commands) {
                 p.spawn((
                     ButtonBundle {
                         style: Style {
-                            padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
                             ..default()
                         },
                         background_color: Color::srgba(0.15, 0.15, 0.2, 0.9).into(),
@@ -373,7 +375,7 @@ fn spawn_ui(cmd: &mut Commands) {
                     p.spawn(TextBundle::from_section(
                         action.label(),
                         TextStyle {
-                            font_size: 13.0,
+                            font_size: 12.0,
                             color: Color::srgb(0.85, 0.85, 0.9),
                             ..default()
                         },

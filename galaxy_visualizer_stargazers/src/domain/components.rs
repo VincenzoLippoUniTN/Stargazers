@@ -63,26 +63,57 @@ pub struct Btn(pub Action);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    // --- View controls (client-side only) ---
     Mode,
     Prev,
     Next,
-    Move,
     Sunray,
     Pause,
     ZoomIn,
     ZoomOut,
+    // --- Planet operations (act on the focused planet) ---
+    Asteroid,
+    KillPlanet,
+    ToggleAi,
+    // --- Explorer operations (act on the selected explorer) ---
+    Move,
+    SelExplorer,
+    KillExplorer,
+    ResetExplorer,
+    Bag,
+    Resources,
+    Combinations,
+    CycleBasic,
+    Generate,
+    CycleComplex,
+    Combine,
 }
 
 impl Action {
-    pub const BAR: [Action; 8] = [
+    /// The buttons shown in the bottom bar, in order. Kept in one place so the
+    /// bar, the keyboard shortcuts and the click handler can't drift apart.
+    pub const BAR: [Action; 21] = [
         Action::Mode,
         Action::Prev,
         Action::Next,
-        Action::Move,
         Action::Sunray,
         Action::Pause,
         Action::ZoomIn,
         Action::ZoomOut,
+        Action::Asteroid,
+        Action::KillPlanet,
+        Action::ToggleAi,
+        Action::Move,
+        Action::SelExplorer,
+        Action::KillExplorer,
+        Action::ResetExplorer,
+        Action::Bag,
+        Action::Resources,
+        Action::Combinations,
+        Action::CycleBasic,
+        Action::Generate,
+        Action::CycleComplex,
+        Action::Combine,
     ];
 
     pub fn label(self) -> &'static str {
@@ -90,11 +121,24 @@ impl Action {
             Action::Mode => "Mode [P]",
             Action::Prev => "Previous [<-]",
             Action::Next => "Next [->]",
-            Action::Move => "Explorer [E]",
             Action::Sunray => "Sun ray [S]",
             Action::Pause => "Pause [Space]",
             Action::ZoomIn => "Zoom in",
             Action::ZoomOut => "Zoom out",
+            Action::Asteroid => "Asteroid [A]",
+            Action::KillPlanet => "Kill planet [K]",
+            Action::ToggleAi => "Toggle AI [I]",
+            Action::Move => "Move explorer [E]",
+            Action::SelExplorer => "Sel explorer [X]",
+            Action::KillExplorer => "Kill explorer [J]",
+            Action::ResetExplorer => "Reset explorer [R]",
+            Action::Bag => "Bag [B]",
+            Action::Resources => "Resources [1]",
+            Action::Combinations => "Combines [2]",
+            Action::CycleBasic => "Basic+ [N]",
+            Action::Generate => "Generate [G]",
+            Action::CycleComplex => "Complex+ [M]",
+            Action::Combine => "Combine [C]",
         }
     }
 }

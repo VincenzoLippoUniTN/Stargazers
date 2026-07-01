@@ -24,7 +24,7 @@ use common_game::utils::ID;
 use crate::explorers::{roaming_explorer, BagSnapshot, Eleanor, Explorer, ExplorerBehaviour};
 use crate::galaxy_layout::{build_galaxy, GalaxyLayout};
 use crate::visualizer::{kind_of, VizBridge};
-use galaxy_visualizer_stargazers::GalaxyCommand;
+use galaxy_visualizer_stargazers::{GalaxyCommand, GalaxyReport, ReportSender};
 
 // =========================================================================
 // PLANET CREATION ALIASES (group-specific constructors, kept as-is)
@@ -76,6 +76,9 @@ struct PlanetLink {
 struct ExplorerLink {
     name: &'static str,
     start_planet: ID,
+    /// Best-known current planet of this explorer, refreshed from
+    /// `CurrentPlanetResult` each tick and on arrival. Starts at `start_planet`.
+    current_planet: ID,
     to_explorer: Sender<OrchestratorToExplorer>,
     /// The planet->explorer sender, registered on every planet this explorer visits.
     to_explorer_from_planet: Sender<PlanetToExplorer>,
@@ -100,6 +103,8 @@ struct Orchestrator {
     commands: Receiver<GalaxyCommand>,
     /// Snapshots out to the visualizer.
     viz: VizBridge,
+    /// Query answers (bag contents, recipe lists, ...) out to the visualizer HUD.
+    reports: ReportSender,
 
     dead_planets: std::collections::HashSet<ID>,
     rng: u64, // xorshift64 (dependency-free; swap for `rand` if you like)
@@ -169,11 +174,15 @@ fn spawn_explorer(
     );
     thread::spawn(move || explorer.run());
 
-    ExplorerLink { name, start_planet, to_explorer, to_explorer_from_planet, alive: true }
+    ExplorerLink { name, start_planet, current_planet: start_planet, to_explorer, to_explorer_from_planet, alive: true }
 }
 
 impl Orchestrator {
-    fn build(commands: Receiver<GalaxyCommand>, mut viz: VizBridge) -> Result<Orchestrator, String> {
+    fn build(
+        commands: Receiver<GalaxyCommand>,
+        mut viz: VizBridge,
+        reports: ReportSender,
+    ) -> Result<Orchestrator, String> {
         let forge = Forge::new()?;
 
         // ONE shared inbound receiver per actor family. Senders are cloned per actor.
@@ -262,6 +271,7 @@ impl Orchestrator {
             from_explorers,
             commands,
             viz,
+            reports,
             dead_planets: std::collections::HashSet::new(),
             rng: seed,
             tick_count: 0,
@@ -405,6 +415,12 @@ impl Orchestrator {
                 }
             }
             GalaxyCommand::KillExplorer { explorer_id } => self.begin_explorer_kill(explorer_id),
+            GalaxyCommand::ResetExplorer { explorer_id } => {
+                self.send_to_explorer(explorer_id, OrchestratorToExplorer::ResetExplorerAI);
+                self.reports.send(GalaxyReport::Notice {
+                    text: format!("Explorer {explorer_id}: reset requested"),
+                });
+            }
             GalaxyCommand::SupportedResources { explorer_id } =>
                 self.send_to_explorer(explorer_id, OrchestratorToExplorer::SupportedResourceRequest),
             GalaxyCommand::SupportedCombinations { explorer_id } =>
@@ -575,6 +591,11 @@ impl Orchestrator {
 
         match msg {
             ExplorerToOrchestrator::CurrentPlanetResult { explorer_id, planet_id } => {
+                // Keep our best-known location fresh so manual MoveExplorer routes
+                // from where the explorer actually is, not its start planet.
+                if let Some(e) = self.explorers.get_mut(&explorer_id) {
+                    e.current_planet = planet_id;
+                }
                 // While walking, advance_journeys owns the marker; don't overwrite it.
                 let walking = self.transit_at.contains_key(&explorer_id);
                 if !walking && self.explorers.get(&explorer_id).map(|e| e.alive).unwrap_or(false) {
@@ -599,13 +620,41 @@ impl Orchestrator {
             ExplorerToOrchestrator::StopExplorerAIResult { .. }
             | ExplorerToOrchestrator::ResetExplorerAIResult { .. }
             | ExplorerToOrchestrator::MovedToPlanetResult { .. } => debug!("[orch] explorer {name} lifecycle/move ack"),
-            // GUI-facing results (forward upstream when the visualizer return path exists).
-            ExplorerToOrchestrator::SupportedResourceResult { .. }
-            | ExplorerToOrchestrator::SupportedCombinationResult { .. }
-            | ExplorerToOrchestrator::GenerateResourceResponse { .. }
-            | ExplorerToOrchestrator::CombineResourceResponse { .. }
-            | ExplorerToOrchestrator::BagContentResponse { .. } => {
-                debug!("[orch] explorer {name} produced a GUI-facing result (TODO: forward)")
+            // GUI-facing results: forward each to the visualizer's report channel
+            // so the user can actually see the answer to what they asked.
+            ExplorerToOrchestrator::SupportedResourceResult { explorer_id, supported_resources } => {
+                let mut resources: Vec<String> =
+                    supported_resources.iter().map(|r| format!("{r:?}")).collect();
+                resources.sort();
+                self.reports.send(GalaxyReport::SupportedResources { explorer_id, resources });
+            }
+            ExplorerToOrchestrator::SupportedCombinationResult { explorer_id, combination_list } => {
+                let mut combinations: Vec<String> =
+                    combination_list.iter().map(|c| format!("{c:?}")).collect();
+                combinations.sort();
+                self.reports
+                    .send(GalaxyReport::SupportedCombinations { explorer_id, combinations });
+            }
+            ExplorerToOrchestrator::GenerateResourceResponse { explorer_id, generated } => {
+                self.reports.send(GalaxyReport::Generated { explorer_id, outcome: generated });
+            }
+            ExplorerToOrchestrator::CombineResourceResponse { explorer_id, generated } => {
+                self.reports.send(GalaxyReport::Combined { explorer_id, outcome: generated });
+            }
+            ExplorerToOrchestrator::BagContentResponse { explorer_id, bag_content } => {
+                let mut basic: Vec<(String, usize)> = bag_content
+                    .basic_resources
+                    .iter()
+                    .map(|(k, v)| (format!("{k:?}"), *v))
+                    .collect();
+                basic.sort();
+                let mut complex: Vec<(String, usize)> = bag_content
+                    .complex_resources
+                    .iter()
+                    .map(|(k, v)| (format!("{k:?}"), *v))
+                    .collect();
+                complex.sort();
+                self.reports.send(GalaxyReport::Bag { explorer_id, basic, complex });
             }
         }
 
@@ -684,6 +733,14 @@ impl Orchestrator {
     }
 
     fn grant_travel(&mut self, explorer_id: ID, sender_to_new_planet: Option<Sender<ExplorerToPlanet>>, planet_id: ID) {
+        // A `Some` sender means the move succeeded, so `planet_id` is now the
+        // explorer's location; a `None` sender is a denial/strand and leaves the
+        // known location unchanged.
+        if sender_to_new_planet.is_some() {
+            if let Some(e) = self.explorers.get_mut(&explorer_id) {
+                e.current_planet = planet_id;
+            }
+        }
         self.send_to_explorer(
             explorer_id,
             OrchestratorToExplorer::MoveToPlanet { sender_to_new_planet, planet_id },
@@ -765,7 +822,7 @@ impl Orchestrator {
     }
 
     fn explorer_current_planet_guess(&self, explorer_id: ID) -> Option<ID> {
-        self.explorers.get(&explorer_id).map(|e| e.start_planet)
+        self.explorers.get(&explorer_id).map(|e| e.current_planet)
     }
 
     /// Returns the neighbours of `planet_id` that are still alive,
@@ -806,19 +863,20 @@ pub fn launch() {
 
     let (galaxy_sender, galaxy_feed) = viz::galaxy_channel();
     let (cmd_sink, cmd_source) = viz::command_channel();
+    let (report_sender, report_feed) = viz::report_channel();
 
     let commands: Receiver<GalaxyCommand> = cmd_source.into_receiver();
 
     thread::spawn(move || {
         let bridge = VizBridge::new(galaxy_sender);
-        match Orchestrator::build(commands, bridge) {
+        match Orchestrator::build(commands, bridge, report_sender) {
             Ok(mut o) => o.run(),
             Err(e) => error!("[orch] creation failed: {e}"),
         }
     });
 
     // Main thread is lent to the window; blocks until it closes.
-    viz::run_with_io(galaxy_feed, cmd_sink);
+    viz::run_with_reports(galaxy_feed, cmd_sink, report_feed);
 }
 
 // =========================================================================
@@ -861,6 +919,12 @@ mod tests {
                 let (sender, _feed) = galaxy_visualizer_stargazers::galaxy_channel();
                 VizBridge::new(sender)
             },
+            // The test doesn't inspect reports; keep the sender alive so sends
+            // are harmless no-ops rather than panics.
+            reports: {
+                let (sender, _feed) = galaxy_visualizer_stargazers::report_channel();
+                sender
+            },
             dead_planets: std::collections::HashSet::new(),
             rng: 42,
             tick_count: 0,
@@ -873,7 +937,7 @@ mod tests {
         orch.planets.insert(1, PlanetLink { name: "Alpha-1", to_planet: tx_to_planet_1, to_planet_from_explorer: tx_from_planet_to_exp_1, alive: true });
         orch.planets.insert(2, PlanetLink { name: "Alpha-2", to_planet: tx_to_planet_2, to_planet_from_explorer: tx_from_planet_to_exp_2, alive: true });
 
-        orch.explorers.insert(99, ExplorerLink { name: "Star-Tracker", start_planet: 1, to_explorer: tx_to_explorer, to_explorer_from_planet: tx_from_exp_to_planet, alive: true });
+        orch.explorers.insert(99, ExplorerLink { name: "Star-Tracker", start_planet: 1, current_planet: 1, to_explorer: tx_to_explorer, to_explorer_from_planet: tx_from_exp_to_planet, alive: true });
 
         tx_from_explorers.send(ExplorerToOrchestrator::TravelToPlanetRequest {
             explorer_id: 99,
@@ -883,6 +947,15 @@ mod tests {
 
         let msg = orch.from_explorers.recv().unwrap();
         orch.handle_explorer_msg(msg); // L'Orchestrator elabora la richiesta
+
+        // Travel is now a per-tick *walk*: `handle_travel_request` leaves the
+        // source planet (OutgoingExplorerRequest) and defers registering the
+        // explorer on its destination to the tick-driven walker. Advance the
+        // journey once (what a tick does) so the explorer reaches planet 2 and
+        // the destination registration is emitted. (Before commit 391d0db travel
+        // registered the destination immediately; this step models the new
+        // multi-hop path the manual "Move explorer" button also relies on.)
+        orch.advance_journeys();
 
         if let Ok(OrchestratorToPlanet::IncomingExplorerRequest { explorer_id, .. }) = rx_to_planet_2.try_recv() {
             assert_eq!(explorer_id, 99);

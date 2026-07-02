@@ -62,4 +62,4 @@ rocket is built, whether a planet is still alive, and where each explorer is.
 
 The Stargazers orchestrator already speaks the `common-game` protocol; a ready-made
 bridge that converts its `DummyPlanetState` into these snapshots lives in the
-Stargazers repo — see `CONNECTING_THE_VISUALIZER.md` there.
+Stargazers repo - see `CONNECTING_THE_VISUALIZER.md` there.

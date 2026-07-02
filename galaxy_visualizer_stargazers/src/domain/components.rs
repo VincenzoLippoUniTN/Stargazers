@@ -94,30 +94,51 @@ pub enum Action {
 }
 
 impl Action {
-    /// The buttons shown in the bottom bar, in order. Kept in one place so the
-    /// bar, the keyboard shortcuts and the click handler can't drift apart.
-    pub const BAR: [Action; 21] = [
-        Action::Mode,
-        Action::Prev,
-        Action::Next,
-        Action::Sunray,
-        Action::Pause,
-        Action::ZoomIn,
-        Action::ZoomOut,
-        Action::Asteroid,
-        Action::KillPlanet,
-        Action::ToggleAi,
-        Action::Move,
-        Action::SelExplorer,
-        Action::KillExplorer,
-        Action::ResetExplorer,
-        Action::Bag,
-        Action::Resources,
-        Action::Combinations,
-        Action::CycleBasic,
-        Action::Generate,
-        Action::CycleComplex,
-        Action::Combine,
+    /// The bottom-bar buttons, grouped under the captions the toolbar shows.
+    /// Kept in one place so the bar, the keyboard shortcuts and the click
+    /// handler can't drift apart.
+    pub const GROUPS: [(&'static str, &'static [Action]); 4] = [
+        (
+            "View",
+            &[
+                Action::Mode,
+                Action::Prev,
+                Action::Next,
+                Action::Pause,
+                Action::ZoomIn,
+                Action::ZoomOut,
+            ],
+        ),
+        (
+            "Planet",
+            &[
+                Action::Sunray,
+                Action::Asteroid,
+                Action::KillPlanet,
+                Action::ToggleAi,
+            ],
+        ),
+        (
+            "Explorer",
+            &[
+                Action::Move,
+                Action::SelExplorer,
+                Action::KillExplorer,
+                Action::ResetExplorer,
+                Action::Bag,
+            ],
+        ),
+        (
+            "Craft",
+            &[
+                Action::Resources,
+                Action::Combinations,
+                Action::CycleBasic,
+                Action::Generate,
+                Action::CycleComplex,
+                Action::Combine,
+            ],
+        ),
     ];
 
     pub fn label(self) -> &'static str {

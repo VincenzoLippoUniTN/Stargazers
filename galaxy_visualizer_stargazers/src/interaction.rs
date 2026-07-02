@@ -10,7 +10,7 @@
 //!   back to a local simulation and the rest are no-ops.
 //!
 //! Every [`Action`] is routed through [`dispatch`], so a keypress and a button
-//! click are guaranteed to do the exact same thing — there's one code path per
+//! click are guaranteed to do the exact same thing - there's one code path per
 //! operation, and the on-screen bar can never drift from the shortcuts.
 
 use bevy::input::mouse::MouseWheel;
@@ -120,8 +120,9 @@ fn handle_buttons(
 }
 
 /// The single place that turns an [`Action`] into an effect. View controls mutate
-/// [`GameState`]; game operations emit a [`GalaxyCommand`] in feed mode or fall
-/// back to local behaviour in demo mode.
+/// [`GameState`]; game operations emit a [`GalaxyCommand`] in feed mode. In demo
+/// mode Sunray and Move simulate locally; the rest report that they need a live
+/// simulation, so a press never changes the HUD without doing anything.
 fn dispatch(
     action: Action,
     state: &mut GameState,
@@ -154,80 +155,94 @@ fn dispatch(
         // ---- Planet operations (act on the focused planet) ----
         Action::Sunray => request_sunray(state, planets, commands),
         Action::Asteroid => {
-            if let Some(planet_id) = focused_planet_id(state) {
-                emit(commands, GalaxyCommand::Asteroid { planet_id });
+            if let Some(sink) = require_sim(commands, state) {
+                if let Some(planet_id) = focused_planet_id(state) {
+                    sink.send(GalaxyCommand::Asteroid { planet_id });
+                }
             }
         }
         Action::KillPlanet => {
-            if let Some(planet_id) = focused_planet_id(state) {
-                emit(commands, GalaxyCommand::Kill { planet_id });
+            if let Some(sink) = require_sim(commands, state) {
+                if let Some(planet_id) = focused_planet_id(state) {
+                    sink.send(GalaxyCommand::Kill { planet_id });
+                }
             }
         }
         Action::ToggleAi => {
-            state.ai_paused = !state.ai_paused;
-            let running = !state.ai_paused;
-            // SetAi is global in the orchestrator; planet_id is carried for
-            // symmetry but the focused one is a sensible default.
-            let planet_id = focused_planet_id(state).unwrap_or(0);
-            emit(commands, GalaxyCommand::SetAi { planet_id, running });
-            state.set_report(vec![format!(
-                "AI {}",
-                if running { "running" } else { "paused" }
-            )]);
+            if let Some(sink) = require_sim(commands, state) {
+                state.ai_paused = !state.ai_paused;
+                let running = !state.ai_paused;
+                // SetAi is global in the orchestrator; planet_id is carried for
+                // symmetry but the focused one is a sensible default.
+                let planet_id = focused_planet_id(state).unwrap_or(0);
+                sink.send(GalaxyCommand::SetAi { planet_id, running });
+                state.set_report(vec![format!(
+                    "AI {}",
+                    if running { "running" } else { "paused" }
+                )]);
+            }
         }
 
         // ---- Explorer operations (act on the selected explorer) ----
         Action::Move => request_move_explorer(state, explorers, commands),
         Action::KillExplorer => {
-            if let Some(explorer_id) = selected_explorer(state, explorers) {
-                emit(commands, GalaxyCommand::KillExplorer { explorer_id });
+            if let Some(sink) = require_sim(commands, state) {
+                if let Some(explorer_id) = selected_explorer(state, explorers) {
+                    sink.send(GalaxyCommand::KillExplorer { explorer_id });
+                    // The victim is the *selected* explorer, which may sit on a
+                    // different planet than the focused one; say which id dies.
+                    state.set_report(vec![format!("Killing explorer {explorer_id}")]);
+                }
             }
         }
         Action::ResetExplorer => {
-            if let Some(explorer_id) = selected_explorer(state, explorers) {
-                emit(commands, GalaxyCommand::ResetExplorer { explorer_id });
+            if let Some(sink) = require_sim(commands, state) {
+                if let Some(explorer_id) = selected_explorer(state, explorers) {
+                    sink.send(GalaxyCommand::ResetExplorer { explorer_id });
+                }
             }
         }
         Action::Bag => {
-            if let Some(explorer_id) = selected_explorer(state, explorers) {
-                emit(commands, GalaxyCommand::BagContent { explorer_id });
+            if let Some(sink) = require_sim(commands, state) {
+                if let Some(explorer_id) = selected_explorer(state, explorers) {
+                    sink.send(GalaxyCommand::BagContent { explorer_id });
+                }
             }
         }
         Action::Resources => {
-            if let Some(explorer_id) = selected_explorer(state, explorers) {
-                emit(commands, GalaxyCommand::SupportedResources { explorer_id });
+            if let Some(sink) = require_sim(commands, state) {
+                if let Some(explorer_id) = selected_explorer(state, explorers) {
+                    sink.send(GalaxyCommand::SupportedResources { explorer_id });
+                }
             }
         }
         Action::Combinations => {
-            if let Some(explorer_id) = selected_explorer(state, explorers) {
-                emit(
-                    commands,
-                    GalaxyCommand::SupportedCombinations { explorer_id },
-                );
+            if let Some(sink) = require_sim(commands, state) {
+                if let Some(explorer_id) = selected_explorer(state, explorers) {
+                    sink.send(GalaxyCommand::SupportedCombinations { explorer_id });
+                }
             }
         }
         Action::Generate => {
-            if let Some(explorer_id) = selected_explorer(state, explorers) {
-                let resource = BASIC_CHOICES[state.basic_choice];
-                emit(
-                    commands,
-                    GalaxyCommand::Generate {
+            if let Some(sink) = require_sim(commands, state) {
+                if let Some(explorer_id) = selected_explorer(state, explorers) {
+                    let resource = BASIC_CHOICES[state.basic_choice];
+                    sink.send(GalaxyCommand::Generate {
                         explorer_id,
                         resource,
-                    },
-                );
+                    });
+                }
             }
         }
         Action::Combine => {
-            if let Some(explorer_id) = selected_explorer(state, explorers) {
-                let resource = COMPLEX_CHOICES[state.complex_choice];
-                emit(
-                    commands,
-                    GalaxyCommand::Combine {
+            if let Some(sink) = require_sim(commands, state) {
+                if let Some(explorer_id) = selected_explorer(state, explorers) {
+                    let resource = COMPLEX_CHOICES[state.complex_choice];
+                    sink.send(GalaxyCommand::Combine {
                         explorer_id,
                         resource,
-                    },
-                );
+                    });
+                }
             }
         }
     }
@@ -277,10 +292,18 @@ fn cycle_selected_explorer(state: &mut GameState, explorers: &Query<&mut Explore
     state.set_report(vec![format!("Selected explorer {next}")]);
 }
 
-/// Emits a command if a sink is present (feed mode); a no-op in demo mode.
-fn emit(commands: &Option<Res<CommandSink>>, command: GalaxyCommand) {
-    if let Some(sink) = commands {
-        sink.send(command);
+/// Returns the command sink in feed mode. In demo mode there is none, so the
+/// press is answered with a report instead of silently doing nothing.
+fn require_sim<'a>(
+    commands: &'a Option<Res<CommandSink>>,
+    state: &mut GameState,
+) -> Option<&'a CommandSink> {
+    match commands {
+        Some(sink) => Some(sink),
+        None => {
+            state.set_report(vec!["Not available in demo".to_string()]);
+            None
+        }
     }
 }
 

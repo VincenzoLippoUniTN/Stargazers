@@ -3,15 +3,15 @@
 //! The crate is organised as a small set of Bevy plugins layered on a plain data
 //! core:
 //!
-//! - [`mod@feed`] — the data contract *out* ([`GalaxySnapshot`] and friends).
-//! - [`mod@command`] — the contract *in* ([`GalaxyCommand`]) for manual operations.
-//! - [`mod@report`] — the contract *out* ([`GalaxyReport`]) for query answers.
-//! - `domain` — planet types, ECS components, world state and galaxy layout.
-//! - `scene` — builds the 3D world from a layout.
-//! - `sync` — reconciles the world with incoming snapshots.
-//! - `motion` — idle animation.
-//! - `interaction` — keyboard, mouse and buttons.
-//! - `view` — camera and HUD.
+//! - [`mod@feed`] - the data contract *out* ([`GalaxySnapshot`] and friends).
+//! - [`mod@command`] - the contract *in* ([`GalaxyCommand`]) for manual operations.
+//! - [`mod@report`] - the contract *out* ([`GalaxyReport`]) for query answers.
+//! - `domain` - planet types, ECS components, world state and galaxy layout.
+//! - `scene` - builds the 3D world from a layout.
+//! - `sync` - reconciles the world with incoming snapshots.
+//! - `motion` - idle animation.
+//! - `interaction` - keyboard, mouse and buttons.
+//! - `view` - camera and HUD.
 //!
 //! Use [`run`] for a self-contained random demo, [`run_with_feed`] to drive the
 //! scene from live snapshots, [`run_with_io`] to also let the UI send manual
@@ -106,7 +106,7 @@ pub fn run_with_io(feed: GalaxyFeed, commands: CommandSink) {
 }
 
 /// Like [`run_with_io`], but also drains [`GalaxyReport`]s off `reports` and shows
-/// the latest one in the HUD — this is what lets a user *see* an explorer's bag
+/// the latest one in the HUD - this is what lets a user *see* an explorer's bag
 /// or a planet's recipe list after asking for it.
 pub fn run_with_reports(feed: GalaxyFeed, commands: CommandSink, reports: ReportFeed) {
     build_app(Some(feed), Some(commands), Some(reports)).run();

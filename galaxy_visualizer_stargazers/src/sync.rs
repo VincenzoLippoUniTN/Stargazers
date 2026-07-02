@@ -11,6 +11,7 @@ use crate::domain::components::{Cell, Explorer, OfPlanet, Planet, Rocket};
 use crate::domain::layout::GalaxyLayout;
 use crate::domain::state::GameState;
 use crate::feed::GalaxyFeed;
+use crate::scene;
 use crate::theme;
 use crate::VisualizerSet;
 
@@ -34,6 +35,8 @@ fn ingest_feed(
     mut planets: Query<&mut Planet>,
     mut explorers: Query<(Entity, &mut Explorer)>,
     mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
     let Some(feed) = feed else {
         return;
@@ -64,17 +67,33 @@ fn ingest_feed(
         let Some(target) = state.index_of(reported.at_planet) else {
             continue;
         };
+        let mut known = false;
         for (_entity, mut ex) in &mut explorers {
-            if ex.id == reported.id && ex.at != target && ex.target.is_none() {
-                ex.target = Some(target);
+            if ex.id == reported.id {
+                known = true;
+                if ex.at != target && ex.target.is_none() {
+                    ex.target = Some(target);
+                }
             }
+        }
+        // An explorer that joined the simulation after the scene was built has
+        // no entity yet; give it one, parked at its reported planet.
+        if !known {
+            scene::spawn_explorer(
+                &mut commands,
+                &mut meshes,
+                &mut mats,
+                reported.id,
+                target,
+                state.positions[target],
+            );
         }
     }
 
     // Despawn explorers the simulation no longer reports. A snapshot is a *full*
     // picture of the galaxy, and the producer drops an explorer from it only when
     // that explorer dies (see `VizBridge::remove_explorer`). So any live entity
-    // whose id is absent from the snapshot has died and must leave the screen —
+    // whose id is absent from the snapshot has died and must leave the screen -
     // including the very last one, whose death yields an empty explorer list.
     for (entity, ex) in &explorers {
         let still_present = snapshot.explorers.iter().any(|r| r.id == ex.id);

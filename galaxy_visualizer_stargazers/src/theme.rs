@@ -37,8 +37,6 @@ pub const SELECTION: Color = Color::srgb(0.45, 0.85, 1.0);
 
 /// Frosted card behind the HUD text.
 pub const PANEL_BG: Color = Color::srgba(0.07, 0.08, 0.13, 0.82);
-/// Slightly denser bar that holds the action buttons.
-pub const BAR_BG: Color = Color::srgba(0.05, 0.06, 0.1, 0.9);
 /// Hairline border shared by panels and buttons.
 pub const BORDER: Color = Color::srgba(0.45, 0.55, 0.85, 0.35);
 

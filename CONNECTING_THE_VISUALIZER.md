@@ -118,13 +118,13 @@ fn main() {
 }
 ```
 
-The snippet above is illustrative — drop the `update_planet` + `publish` calls into
+The snippet above is illustrative - drop the `update_planet` + `publish` calls into
 whatever loop your orchestrator already runs to keep the picture live.
 
 ## 3. Manual operations (the input channel)
 
 State flows *out* as snapshots; manual operations flow back *in* as commands. The
-visualizer only ever **emits an intent** — it never touches your planets. Your
+visualizer only ever **emits an intent** - it never touches your planets. Your
 orchestrator drains those intents and runs them through the *same* code its AI
 uses, so a button press and an automatic action are one and the same. The result
 shows up on the next snapshot, keeping the orchestrator the single source of truth.
@@ -157,7 +157,7 @@ run_with_io(feed, sink); // blocks until the window closes
 ```
 
 `handle_command` is the bridge between an intent and a real `OrchestratorToPlanet`
-message — and the key point is that each arm calls the **same helper your AI
+message - and the key point is that each arm calls the **same helper your AI
 calls**, so there's exactly one code path per operation:
 
 ```rust
@@ -216,9 +216,9 @@ the rest are no-ops, so the standalone demo keeps working without a backend.
 ## 4. Query answers (the report channel)
 
 `Sunray`/`Asteroid`/`Kill`/`Move` change the galaxy, so their result shows up on
-the next **snapshot**. But the *query* commands — `BagContent`,
+the next **snapshot**. But the *query* commands - `BagContent`,
 `SupportedResources`, `SupportedCombinations`, and the outcome of
-`Generate`/`Combine` — ask a question a snapshot can't answer (a snapshot only
+`Generate`/`Combine` - ask a question a snapshot can't answer (a snapshot only
 describes physical galaxy state, not an explorer's inventory or a planet's recipe
 list). Those answers come back on a separate **report** channel and are shown in
 the HUD.
@@ -255,12 +255,12 @@ know your resource or bag types. The orchestrator maps each explorer result
 - **Dead planets** disappear once you call `set_alive(id, false)`.
 - **Explorers** present when the galaxy is first built fly between planets as you
   update them with `set_explorer`. An explorer **disappears** as soon as it stops
-  being reported in a snapshot — so call `remove_explorer(id)` when one dies and
+  being reported in a snapshot - so call `remove_explorer(id)` when one dies and
   it leaves the screen on the next `publish()`.
 
 The **first** snapshot fixes the layout (planet count, ids and kinds); later
-snapshots only change the dynamic state. Register every planet — and record any
-explorers — before the first `publish()` so they all appear.
+snapshots only change the dynamic state. Register every planet - and record any
+explorers - before the first `publish()` so they all appear.
 
 ## Snapshot model (if you'd rather not use the bridge)
 

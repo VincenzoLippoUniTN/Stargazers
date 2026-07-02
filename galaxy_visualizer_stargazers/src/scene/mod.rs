@@ -5,7 +5,9 @@ mod mesh;
 
 use bevy::core_pipeline::bloom::BloomSettings;
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use bevy::render::render_resource::Face;
 use rand::prelude::*;
 use std::f32::consts::TAU;
 
@@ -32,7 +34,7 @@ fn setup_scene(
     mut mats: ResMut<Assets<StandardMaterial>>,
     mut state: ResMut<GameState>,
 ) {
-    state.zoom = 55.0;
+    state.zoom = 75.0;
 
     cmd.spawn((
         PbrBundle {
@@ -67,6 +69,7 @@ fn setup_scene(
                 ..default()
             },
             Corona(layer),
+            NotShadowCaster,
         ));
     }
 
@@ -100,6 +103,7 @@ fn setup_scene(
             ..default()
         },
         SelectionGlow,
+        NotShadowCaster,
     ));
 
     cmd.spawn(PointLightBundle {
@@ -157,37 +161,61 @@ fn build_galaxy(
         let p1 = layout.planets[a].position;
         let p2 = layout.planets[b].position;
         let dir = p2 - p1;
-        cmd.spawn(PbrBundle {
-            mesh: meshes.add(Cylinder::new(0.04, dir.length())),
-            material: connection_mat.clone(),
-            transform: Transform::from_translation((p1 + p2) * 0.5)
-                .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir.normalize())),
-            ..default()
-        });
+        cmd.spawn((
+            PbrBundle {
+                mesh: meshes.add(Cylinder::new(0.04, dir.length())),
+                material: connection_mat.clone(),
+                transform: Transform::from_translation((p1 + p2) * 0.5)
+                    .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir.normalize())),
+                ..default()
+            },
+            NotShadowCaster,
+        ));
     }
 
     for e in &layout.explorers {
-        cmd.spawn((
-            PbrBundle {
-                mesh: meshes.add(Capsule3d::new(0.22, 0.4)),
-                material: mats.add(soft_matte_material(theme::EXPLORER, 0.7)),
-                transform: Transform::from_translation(layout.planets[e.at].position),
-                ..default()
-            },
-            Explorer {
-                id: e.id,
-                at: e.at,
-                target: None,
-                progress: 0.0,
-                angle: rng.gen_range(0.0..TAU),
-            },
-        ));
+        spawn_explorer(
+            &mut cmd,
+            &mut meshes,
+            &mut mats,
+            e.id,
+            e.at,
+            layout.planets[e.at].position,
+        );
     }
 
     state.positions = layout.planets.iter().map(|p| p.position).collect();
     state.planet_ids = layout.planets.iter().map(|p| p.id).collect();
     state.edges = layout.edges;
     state.built = true;
+}
+
+/// Spawns one explorer capsule. Used at build time and again by the feed sync
+/// when a snapshot reports an explorer the scene has no entity for yet.
+pub(crate) fn spawn_explorer(
+    cmd: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mats: &mut Assets<StandardMaterial>,
+    id: u32,
+    at: usize,
+    position: Vec3,
+) {
+    let mut rng = rand::thread_rng();
+    cmd.spawn((
+        PbrBundle {
+            mesh: meshes.add(Capsule3d::new(0.22, 0.4)),
+            material: mats.add(soft_matte_material(theme::EXPLORER, 0.7)),
+            transform: Transform::from_translation(position),
+            ..default()
+        },
+        Explorer {
+            id,
+            at,
+            target: None,
+            progress: 0.0,
+            angle: rng.gen_range(0.0..TAU),
+        },
+    ));
 }
 
 fn spawn_planet(
@@ -220,20 +248,26 @@ fn spawn_planet(
         OfPlanet(index),
     ));
 
+    // Atmosphere halo. Front faces are culled so the additive glow only
+    // survives the depth test outside the planet's silhouette: a rim of light
+    // around the edge, with the surface itself left untouched.
     let c = kind.color().to_srgba();
+    let mut halo = glowing_material(
+        Color::srgb(c.red * 1.08, c.green * 1.08, c.blue * 1.08),
+        0.4,
+        0.12,
+        AlphaMode::Add,
+    );
+    halo.cull_mode = Some(Face::Front);
     cmd.spawn((
         PbrBundle {
             mesh: meshes.add(Sphere::new(kind.radius() * 1.12).mesh().ico(3).unwrap()),
-            material: mats.add(glowing_material(
-                Color::srgb(c.red * 1.08, c.green * 1.08, c.blue * 1.08),
-                0.22,
-                0.08,
-                AlphaMode::Add,
-            )),
+            material: mats.add(halo),
             transform: Transform::from_translation(pos),
             ..default()
         },
         OfPlanet(index),
+        NotShadowCaster,
     ));
 
     if index.is_multiple_of(2) {
@@ -258,6 +292,7 @@ fn spawn_planet(
                 ..default()
             },
             OfPlanet(index),
+            NotShadowCaster,
         ));
     }
 
@@ -276,6 +311,7 @@ fn spawn_planet(
             ..default()
         },
         OfPlanet(index),
+        NotShadowCaster,
     ));
 
     let cell_count = kind.cell_count();
@@ -340,7 +376,6 @@ fn spawn_ui(cmd: &mut Commands) {
             },
             background_color: theme::PANEL_BG.into(),
             border_color: theme::BORDER.into(),
-            border_radius: BorderRadius::all(Val::Px(18.0)),
             ..default()
         })
         .with_children(|p| {
@@ -371,50 +406,85 @@ fn spawn_ui(cmd: &mut Commands) {
             ));
         });
 
+        // Invisible layout row: the group boxes carry their own frames, so the
+        // bar itself draws nothing.
         p.spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
-                padding: UiRect::all(Val::Px(12.0)),
-                border: UiRect::all(Val::Px(1.0)),
                 flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::Center,
+                align_items: AlignItems::Stretch,
                 flex_wrap: FlexWrap::Wrap,
-                column_gap: Val::Px(8.0),
-                row_gap: Val::Px(8.0),
+                column_gap: Val::Px(10.0),
+                row_gap: Val::Px(10.0),
                 ..default()
             },
-            background_color: theme::BAR_BG.into(),
-            border_color: theme::BORDER.into(),
-            border_radius: BorderRadius::all(Val::Px(18.0)),
             ..default()
         })
         .with_children(|p| {
-            for action in Action::BAR {
-                p.spawn((
-                    ButtonBundle {
-                        style: Style {
-                            padding: UiRect::axes(Val::Px(11.0), Val::Px(7.0)),
-                            border: UiRect::all(Val::Px(1.0)),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::Center,
-                            ..default()
-                        },
-                        background_color: theme::BTN_IDLE.into(),
-                        border_color: theme::BORDER.into(),
-                        border_radius: BorderRadius::all(Val::Px(999.0)),
+            for (caption, actions) in Action::GROUPS {
+                p.spawn(NodeBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::all(Val::Px(8.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        row_gap: Val::Px(6.0),
                         ..default()
                     },
-                    Btn(action),
-                ))
+                    background_color: theme::PANEL_BG.into(),
+                    border_color: theme::BORDER.into(),
+                    ..default()
+                })
                 .with_children(|p| {
                     p.spawn(TextBundle::from_section(
-                        action.label(),
+                        caption,
                         TextStyle {
-                            font_size: 12.0,
-                            color: theme::TEXT_BTN,
+                            font_size: 11.0,
+                            color: theme::TEXT_BODY,
                             ..default()
                         },
                     ));
+                    p.spawn(NodeBundle {
+                        style: Style {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::Center,
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: Val::Px(8.0),
+                            row_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        ..default()
+                    })
+                    .with_children(|p| {
+                        for &action in actions {
+                            p.spawn((
+                                ButtonBundle {
+                                    style: Style {
+                                        padding: UiRect::axes(Val::Px(11.0), Val::Px(7.0)),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        ..default()
+                                    },
+                                    background_color: theme::BTN_IDLE.into(),
+                                    border_color: theme::BORDER.into(),
+                                    ..default()
+                                },
+                                Btn(action),
+                            ))
+                            .with_children(|p| {
+                                p.spawn(TextBundle::from_section(
+                                    action.label(),
+                                    TextStyle {
+                                        font_size: 12.0,
+                                        color: theme::TEXT_BTN,
+                                        ..default()
+                                    },
+                                ));
+                            });
+                        }
+                    });
                 });
             }
         });

@@ -98,9 +98,9 @@ fn update_hud(
     t.sections[0].value = match state.mode {
         Mode::Galaxy => {
             if live {
-                "Stargazers Galaxy  •  live\n".into()
+                "Stargazers Galaxy  -  live\n".into()
             } else {
-                "Stargazers Galaxy  •  demo\n".into()
+                "Stargazers Galaxy  -  demo\n".into()
             }
         }
         Mode::Planet => {
@@ -109,7 +109,7 @@ fn update_hud(
                 .find(|p| p.id == state.focus)
                 .map(|p| format!("{:?}", p.planet_type))
                 .unwrap_or_default();
-            format!("Selected planet {}  •  Type {}\n", state.focus, kind)
+            format!("Selected planet {}  -  Type {}\n", state.focus, kind)
         }
     };
 
@@ -146,14 +146,14 @@ fn update_hud(
         );
 
         let status = match (p.alive, state.paused) {
-            (false, true) => "\nStatus  destroyed • animation paused",
+            (false, true) => "\nStatus  destroyed - animation paused",
             (false, false) => "\nStatus  destroyed",
             (true, true) => "\nStatus  animation paused",
             (true, false) => "",
         };
 
         let mut body = format!(
-            "{}\n\nEnergy   {}/{}\nRocket   {}\nElement  {}\nVisitors {}\n\nExplorer {}\nAI       {}\nGenerate → {}\nCombine  → {}{}",
+            "{}\n\nEnergy   {}/{}\nRocket   {}\nElement  {}\nVisitors {}\n\nExplorer {}\nAI       {}\nGenerate > {}\nCombine  > {}{}",
             p.planet_type.info(),
             charged,
             p.cells_charged.len(),

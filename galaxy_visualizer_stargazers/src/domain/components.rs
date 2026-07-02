@@ -123,12 +123,12 @@ impl Action {
     pub fn label(self) -> &'static str {
         match self {
             Action::Mode => "Mode [P]",
-            Action::Prev => "Prev [←]",
-            Action::Next => "Next [→]",
+            Action::Prev => "Prev [<]",
+            Action::Next => "Next [>]",
             Action::Sunray => "Sun [S]",
             Action::Pause => "Pause [Space]",
             Action::ZoomIn => "Zoom +",
-            Action::ZoomOut => "Zoom −",
+            Action::ZoomOut => "Zoom -",
             Action::Asteroid => "Asteroid [A]",
             Action::KillPlanet => "Kill planet [K]",
             Action::ToggleAi => "AI [I]",

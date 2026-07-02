@@ -42,7 +42,7 @@ use rusty_crab_ap2025::planet::create_planet as new_ryc;
 // =========================================================================
 // TUNABLES
 // =========================================================================
-const TICK_INTERVAL: Duration = Duration::from_millis(2000);
+const TICK_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Ticks before any asteroid is sent (10 ticks = 5 s).
 const WARMUP_TICKS: u32 = 10;

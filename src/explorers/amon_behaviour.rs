@@ -11,9 +11,9 @@ use crate::explorers::explorer::AI;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum AmonState {
-    GoldRush,
-    AssemblyLine, // Sostituisce Evacuating e BunkerCrafting, unendoli in modo logico
-    VictoryFlex,
+    GoldRush, //Search all the necessary resource (defined quantity)
+    AssemblyLine,//Line assembly to generate the AiPartner
+    VictoryFlex, //Amon is The Emperor of the Galaxy so He generate infinite Robot until he can/die
 }
 
 #[derive(Debug, Clone, Default)]
@@ -60,14 +60,14 @@ pub fn amon_behaviour(ai: AI) {
     let mut state = AmonState::GoldRush;
     let mut galaxy_map: HashMap<ID, AmonPlanetInfo> = HashMap::new();
 
-    ai.log(Channel::Info, "🤖 Amon online. Ricetta AIPartner caricata (3C, 1Si, 1H, 1O).");
+    ai.log(Channel::Info, "[AMON] online. Receipe AIPartner uploaded (3C, 1Si, 1H, 1O).");
 
     while !ai.is_killed() {
         let elapsed = start_time.elapsed().as_secs();
 
-        // Limite di tempo per rompere gli indugi
+        //The probability that the Planet with Basic resource exploding after 30 sec is high so Amon left it until 24sec
         if elapsed >= 24 && state == AmonState::GoldRush {
-            ai.log(Channel::Warning, "🚨 ALLARME 24 SECONDI! Fine estrazione, avvio catena di montaggio!");
+            ai.log(Channel::Warning, "[AMON] ALLARM 24 Seconds! End Extraction, Starting to produce!");
             state = AmonState::AssemblyLine;
         }
 
@@ -92,9 +92,8 @@ pub fn amon_behaviour(ai: AI) {
                 let h = bag.get_basic_count(Hydrogen);
                 let o = bag.get_basic_count(Oxygen);
 
-                // Appena ha gli ingredienti esatti per 1 AIPartner, va in catena di montaggio.
                 if c >= 3 && si >= 1 && h >= 1 && o >= 1 {
-                    ai.log(Channel::Info, "🎒 Risorse perfette per AIPartner raccolte! Avvio assemblaggio.");
+                    ai.log(Channel::Info, "[AMON] has all the necessary recources to generate the AIPartner! Starting the Generation.");
                     state = AmonState::AssemblyLine;
                     continue;
                 }
@@ -117,7 +116,7 @@ pub fn amon_behaviour(ai: AI) {
 
                         if current_amount < *target_amount {
                             if ai.generate(resource.clone()).is_ok() {
-                                ai.log(Channel::Debug, &format!("⛏️ Preso {:?} (Zaino: {}/{})", resource, current_amount + 1, target_amount));
+                                ai.log(Channel::Debug, &format!("[AMON] Take {:?} (Bag: {}/{})", resource, current_amount + 1, target_amount));
                                 extracted_this_tick = true;
                                 break;
                             }
@@ -147,7 +146,6 @@ pub fn amon_behaviour(ai: AI) {
                         if let Some(&target) = unexplored {
                             if ai.travel(target).is_ok() { thread::sleep(Duration::from_millis(1500)); }
                         } else {
-                            // MECCANISMO ANTI-RIMBALZO
                             let fallback = info.neighbors[(elapsed as usize) % info.neighbors.len().max(1)];
                             if ai.travel(fallback).is_ok() { thread::sleep(Duration::from_millis(1500)); }
                         }
@@ -160,6 +158,7 @@ pub fn amon_behaviour(ai: AI) {
                 let bag = ai.bag();
 
                 if bag.get_complex_count(AIPartner) > 0 {
+                    ai.log(Channel::Info, "[AMON] AIPartner generated! Transition to VictoryFlex to produce infinite Robot.");
                     state = AmonState::VictoryFlex;
                     continue;
                 }
@@ -172,7 +171,6 @@ pub fn amon_behaviour(ai: AI) {
                 current_info.neighbors = ai.neighbors();
                 galaxy_map.insert(current_planet, current_info.clone());
 
-                // Come Eleanor, decide un bersaglio specifico dal basso verso l'alto
                 let mut target_complex = None;
                 if bag.get_complex_count(Robot) > 0 && bag.get_complex_count(Diamond) > 0 {
                     target_complex = Some(AIPartner);
@@ -187,56 +185,140 @@ pub fn amon_behaviour(ai: AI) {
                 }
 
                 if let Some(target) = target_complex {
-                    // Controlla se può fabbricarlo QUI
                     if current_info.combines.contains(&target) {
                         if ai.combine(target).is_ok() {
-                            ai.log(Channel::Info, &format!("🛠️ Successo Fabbrica: Creato {:?}", target));
+                            ai.log(Channel::Info, &format!("[AMON] Success combination: Created {:?}", target));
                             thread::sleep(Duration::from_millis(200));
                         }
                     } else {
-                        // Cerca un pianeta che sa fare questa specifica risorsa
                         let dest = galaxy_map.iter().find_map(|(&id, p_info)| {
                             if p_info.combines.contains(&target) { Some(id) } else { None }
                         });
 
                         if let Some(dest_id) = dest {
                             if let Some(next_hop) = get_next_hop(current_planet, dest_id, &galaxy_map) {
-                                ai.log(Channel::Debug, &format!("🏃 Viaggio verso {} per combinare {:?}", dest_id, target));
+                                ai.log(Channel::Debug, &format!("[AMON] Travel to {} to combine {:?}", dest_id, target));
                                 if ai.travel(next_hop).is_ok() { thread::sleep(Duration::from_millis(1500)); }
                             }
                         } else {
-                            // Se non lo conosce, esplora
                             let unexplored = current_info.neighbors.iter().find(|&&n| !galaxy_map.contains_key(&n));
                             if let Some(&next) = unexplored {
-                                ai.log(Channel::Debug, &format!("🔭 Cerco laboratorio per {:?}: salto su ignoto {}", target, next));
+                                ai.log(Channel::Debug, &format!("[AMON] Searching for laboratory to {:?}: JUMP {}", target, next));
                                 if ai.travel(next).is_ok() { thread::sleep(Duration::from_millis(1500)); }
                             } else {
-                                // ANTI-RIMBALZO
                                 let fallback = current_info.neighbors[(elapsed as usize) % current_info.neighbors.len().max(1)];
-                                ai.log(Channel::Warning, &format!("⚠️ Giro a vuoto cercando laboratorio per {:?}, salto su {}", target, fallback));
+                                ai.log(Channel::Warning, &format!("[AMON] Searching a laboratory  {:?}, JUMP ON {}", target, fallback));
                                 if ai.travel(fallback).is_ok() { thread::sleep(Duration::from_millis(1500)); }
                             }
                         }
                     }
                 } else {
-                    // Se non sa cosa costruire, ha finito le risorse base troppo presto!
-                    ai.log(Channel::Warning, "⚠️ Risorse terminate prima di AIPartner! Ritorno a scavare.");
-                    state = AmonState::GoldRush;
+                    // If we are past the 24-second mark, we do NOT return to GoldRush, to avoid traveling to basic resource planets.
+                    if elapsed < 24 {
+                        ai.log(Channel::Warning, "[AMON] Resources terminated until AIPArtner generation! Return to Search basic resources.");
+                        state = AmonState::GoldRush;
+                    } else {
+                        // If time has run out, try to scavenge the area for anything useful; otherwise, move aimlessly or explore.
+                        let _ = ai.discover_resources();
+                        current_info.generates = ai.known_resources();
+
+                        let mut estratto = false;
+                        for res in &[Carbon, Silicon, Hydrogen, Oxygen] {
+                            if current_info.generates.contains(res) {
+                                if ai.generate(res.clone()).is_ok() {
+                                    estratto = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if !estratto {
+                            let fallback = current_info.neighbors[(elapsed as usize) % current_info.neighbors.len().max(1)];
+                            let _ = ai.travel(fallback);
+                            thread::sleep(Duration::from_millis(1500));
+                        }
+                    }
                 }
             }
 
             AmonState::VictoryFlex => {
-                let final_bag = ai.bag();
-                ai.log(Channel::Info, &format!(
-                    "🏆 AMON HA FINITO. Risorse Finali -> AIPartner: {} | Robot avanzi: {} | Diamanti extra: {}",
-                    final_bag.get_complex_count(AIPartner),
-                    final_bag.get_complex_count(Robot),
-                    final_bag.get_complex_count(Diamond)
-                ));
+                let current_planet = ai.current_planet();
+                let bag = ai.bag();
 
-                loop {
-                    if ai.is_killed() { break; }
-                    thread::sleep(Duration::from_millis(500));
+                let _ = ai.discover_resources();
+                let _ = ai.discover_combinations();
+                let _ = ai.request_neighbors();
+
+                let mut current_info = galaxy_map.get(&current_planet).cloned().unwrap_or_default();
+                current_info.generates = ai.known_resources();
+                current_info.combines = ai.known_combinations();
+                current_info.neighbors = ai.neighbors();
+                galaxy_map.insert(current_planet, current_info.clone());
+
+                // Calcola il target logico focalizzato SOLO su Robot (Silicon + Life)
+                let mut target_complex = None;
+                if bag.get_complex_count(Life) > 0 && bag.get_basic_count(Silicon) > 0 {
+                    target_complex = Some(Robot);
+                } else if bag.get_complex_count(Water) > 0 && bag.get_basic_count(Carbon) > 0 {
+                    target_complex = Some(Life);
+                } else if bag.get_basic_count(Hydrogen) > 0 && bag.get_basic_count(Oxygen) > 0 {
+                    target_complex = Some(Water);
+                }
+
+                if let Some(target) = target_complex {
+                    // 1. Try combining it on the spot.
+                    if current_info.combines.contains(&target) {
+                        if ai.combine(target).is_ok() {
+                            ai.log(Channel::Info, &format!("[AMON] Emperor Factory: Created {:?}", target));
+                            thread::sleep(Duration::from_millis(200));
+                        }
+                    } else {
+                        // 2. Travel to a laboratory known for the combination.
+                        let dest = galaxy_map.iter().find_map(|(&id, p_info)| {
+                            if p_info.combines.contains(&target) { Some(id) } else { None }
+                        });
+
+                        if let Some(dest_id) = dest {
+                            if let Some(next_hop) = get_next_hop(current_planet, dest_id, &galaxy_map) {
+                                if ai.travel(next_hop).is_ok() { thread::sleep(Duration::from_millis(1500)); }
+                            }
+                        } else {
+                            // 3. Explore the unknown territory if the laboratory is unknown.
+                            let unexplored = current_info.neighbors.iter().find(|&&n| !galaxy_map.contains_key(&n));
+                            if let Some(&next) = unexplored {
+                                if ai.travel(next).is_ok() { thread::sleep(Duration::from_millis(1500)); }
+                            } else {
+                                // Anti-bounce
+                                let fallback = current_info.neighbors[(elapsed as usize) % current_info.neighbors.len().max(1)];
+                                if ai.travel(fallback).is_ok() { thread::sleep(Duration::from_millis(1500)); }
+                            }
+                        }
+                    }
+                } else {
+                    // If it doesn't know what to produce (due to a lack of basic resources), it gathers them ONLY if it is already on the right planet.
+                    // Having exceeded the 24-second mark, it does NOT specifically move towards planets with basic resources.
+                    let mut extracted = false;
+                    let robot_needed_basics = [Silicon, Carbon, Hydrogen, Oxygen];
+
+                    for res in robot_needed_basics.iter() {
+                        if current_info.generates.contains(res) {
+                            if ai.generate(res.clone()).is_ok() {
+                                ai.log(Channel::Debug, &format!("[AMON] Emperor Factory find locally: {:?}", res));
+                                extracted = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if !extracted {
+                        // If it cannot gather anything here and has no active combinations, it moves to search for laboratories or unknown planets.                        let unexplored = current_info.neighbors.iter().find(|&&n| !galaxy_map.contains_key(&n));
+                        let unexplored = current_info.neighbors.iter().find(|&&n| !galaxy_map.contains_key(&n));
+                        if let Some(&next) = unexplored {
+                            if ai.travel(next).is_ok() { thread::sleep(Duration::from_millis(1500)); }
+                        } else {
+                            let fallback = current_info.neighbors[(elapsed as usize) % current_info.neighbors.len().max(1)];
+                            if ai.travel(fallback).is_ok() { thread::sleep(Duration::from_millis(1500)); }
+                        }
+                    }
                 }
             }
         }

@@ -3,13 +3,18 @@
 
 mod mesh;
 
+use bevy::core_pipeline::bloom::BloomSettings;
+use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use bevy::render::render_resource::Face;
 use rand::prelude::*;
 use std::f32::consts::TAU;
 
 use crate::domain::components::*;
 use crate::domain::layout::{GalaxyLayout, PlanetInit};
 use crate::domain::state::{GameState, Source};
+use crate::theme;
 use crate::VisualizerSet;
 
 pub struct ScenePlugin;
@@ -29,16 +34,17 @@ fn setup_scene(
     mut mats: ResMut<Assets<StandardMaterial>>,
     mut state: ResMut<GameState>,
 ) {
-    state.zoom = 55.0;
+    state.zoom = 75.0;
 
     cmd.spawn((
         PbrBundle {
             mesh: meshes.add(Sphere::new(3.0).mesh().ico(5).unwrap()),
-            material: mats.add(StandardMaterial {
-                base_color: Color::srgb(1.0, 0.98, 0.9),
-                emissive: LinearRgba::new(4.0, 3.5, 2.0, 1.0),
-                ..default()
-            }),
+            material: mats.add(glowing_material(
+                Color::srgb(1.0, 0.9, 0.58),
+                4.0,
+                1.0,
+                AlphaMode::Opaque,
+            )),
             ..default()
         },
         Sun,
@@ -54,28 +60,55 @@ fn setup_scene(
                         .unwrap(),
                 ),
                 material: mats.add(StandardMaterial {
-                    base_color: Color::srgba(1.0, 0.9, 0.6, 0.25 / layer as f32),
-                    emissive: LinearRgba::new(0.8, 0.5, 0.2, 1.0),
+                    base_color: with_alpha(Color::srgb(1.0, 0.78, 0.42), 0.18 / layer as f32),
+                    emissive: theme::glow(Color::srgb(1.0, 0.68, 0.3), 0.9),
                     alpha_mode: AlphaMode::Add,
+                    unlit: true,
                     ..default()
                 }),
                 ..default()
             },
             Corona(layer),
+            NotShadowCaster,
         ));
     }
 
     cmd.spawn((
         Camera3dBundle {
+            camera: Camera {
+                hdr: true,
+                ..default()
+            },
+            tonemapping: Tonemapping::TonyMcMapface,
             transform: Transform::from_xyz(0.0, 45.0, 65.0).looking_at(Vec3::ZERO, Vec3::Y),
             ..default()
+        },
+        BloomSettings {
+            intensity: 0.22,
+            ..BloomSettings::NATURAL
         },
         MainCamera,
     ));
 
+    cmd.spawn((
+        PbrBundle {
+            mesh: meshes.add(Sphere::new(1.0).mesh().ico(4).unwrap()),
+            material: mats.add(glowing_material(
+                theme::SELECTION,
+                2.8,
+                0.23,
+                AlphaMode::Add,
+            )),
+            visibility: Visibility::Hidden,
+            ..default()
+        },
+        SelectionGlow,
+        NotShadowCaster,
+    ));
+
     cmd.spawn(PointLightBundle {
         point_light: PointLight {
-            intensity: 12_000_000.0,
+            intensity: 8_000_000.0,
             range: 250.0,
             color: Color::srgb(1.0, 0.97, 0.92),
             shadows_enabled: true,
@@ -85,8 +118,8 @@ fn setup_scene(
     });
 
     cmd.insert_resource(AmbientLight {
-        color: Color::srgb(0.4, 0.45, 0.6),
-        brightness: 60.0,
+        color: Color::srgb(0.45, 0.5, 0.68),
+        brightness: 90.0,
     });
 
     spawn_ui(&mut cmd);
@@ -117,8 +150,8 @@ fn build_galaxy(
     }
 
     let connection_mat = mats.add(StandardMaterial {
-        base_color: Color::srgba(0.4, 0.6, 0.9, 0.08),
-        emissive: LinearRgba::new(0.05, 0.08, 0.15, 1.0),
+        base_color: with_alpha(theme::CONNECTION, 0.1),
+        emissive: theme::glow(theme::CONNECTION, 0.2),
         alpha_mode: AlphaMode::Add,
         unlit: true,
         ..default()
@@ -128,42 +161,61 @@ fn build_galaxy(
         let p1 = layout.planets[a].position;
         let p2 = layout.planets[b].position;
         let dir = p2 - p1;
-        cmd.spawn(PbrBundle {
-            mesh: meshes.add(Cylinder::new(0.04, dir.length())),
-            material: connection_mat.clone(),
-            transform: Transform::from_translation((p1 + p2) * 0.5)
-                .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir.normalize())),
-            ..default()
-        });
+        cmd.spawn((
+            PbrBundle {
+                mesh: meshes.add(Cylinder::new(0.04, dir.length())),
+                material: connection_mat.clone(),
+                transform: Transform::from_translation((p1 + p2) * 0.5)
+                    .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir.normalize())),
+                ..default()
+            },
+            NotShadowCaster,
+        ));
     }
 
     for e in &layout.explorers {
-        cmd.spawn((
-            PbrBundle {
-                mesh: meshes.add(Capsule3d::new(0.22, 0.4)),
-                material: mats.add(StandardMaterial {
-                    base_color: Color::srgb(0.3, 1.0, 0.6),
-                    emissive: LinearRgba::new(0.2, 0.8, 0.4, 1.0),
-                    metallic: 0.6,
-                    ..default()
-                }),
-                transform: Transform::from_translation(layout.planets[e.at].position),
-                ..default()
-            },
-            Explorer {
-                id: e.id,
-                at: e.at,
-                target: None,
-                progress: 0.0,
-                angle: rng.gen_range(0.0..TAU),
-            },
-        ));
+        spawn_explorer(
+            &mut cmd,
+            &mut meshes,
+            &mut mats,
+            e.id,
+            e.at,
+            layout.planets[e.at].position,
+        );
     }
 
     state.positions = layout.planets.iter().map(|p| p.position).collect();
     state.planet_ids = layout.planets.iter().map(|p| p.id).collect();
     state.edges = layout.edges;
     state.built = true;
+}
+
+/// Spawns one explorer capsule. Used at build time and again by the feed sync
+/// when a snapshot reports an explorer the scene has no entity for yet.
+pub(crate) fn spawn_explorer(
+    cmd: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mats: &mut Assets<StandardMaterial>,
+    id: u32,
+    at: usize,
+    position: Vec3,
+) {
+    let mut rng = rand::thread_rng();
+    cmd.spawn((
+        PbrBundle {
+            mesh: meshes.add(Capsule3d::new(0.22, 0.4)),
+            material: mats.add(soft_matte_material(theme::EXPLORER, 0.7)),
+            transform: Transform::from_translation(position),
+            ..default()
+        },
+        Explorer {
+            id,
+            at,
+            target: None,
+            progress: 0.0,
+            angle: rng.gen_range(0.0..TAU),
+        },
+    ));
 }
 
 fn spawn_planet(
@@ -180,12 +232,7 @@ fn spawn_planet(
     cmd.spawn((
         PbrBundle {
             mesh: meshes.add(Sphere::new(kind.radius()).mesh().ico(5).unwrap()),
-            material: mats.add(StandardMaterial {
-                base_color: kind.color(),
-                metallic: 0.05,
-                perceptual_roughness: 0.75,
-                ..default()
-            }),
+            material: mats.add(matte_material(kind.color())),
             transform: Transform::from_translation(pos),
             ..default()
         },
@@ -201,19 +248,26 @@ fn spawn_planet(
         OfPlanet(index),
     ));
 
+    // Atmosphere halo. Front faces are culled so the additive glow only
+    // survives the depth test outside the planet's silhouette: a rim of light
+    // around the edge, with the surface itself left untouched.
     let c = kind.color().to_srgba();
+    let mut halo = glowing_material(
+        Color::srgb(c.red * 1.08, c.green * 1.08, c.blue * 1.08),
+        0.4,
+        0.12,
+        AlphaMode::Add,
+    );
+    halo.cull_mode = Some(Face::Front);
     cmd.spawn((
         PbrBundle {
             mesh: meshes.add(Sphere::new(kind.radius() * 1.12).mesh().ico(3).unwrap()),
-            material: mats.add(StandardMaterial {
-                base_color: Color::srgba(c.red * 1.2, c.green * 1.2, c.blue * 1.2, 0.08),
-                alpha_mode: AlphaMode::Add,
-                ..default()
-            }),
+            material: mats.add(halo),
             transform: Transform::from_translation(pos),
             ..default()
         },
         OfPlanet(index),
+        NotShadowCaster,
     ));
 
     if index.is_multiple_of(2) {
@@ -227,16 +281,18 @@ fn spawn_planet(
             PbrBundle {
                 mesh: meshes.add(mesh::ring(kind.radius() * 1.5, kind.radius() * 2.2)),
                 material: mats.add(StandardMaterial {
-                    base_color: Color::srgba(0.9, 0.85, 0.8, 0.25),
+                    base_color: theme::RING,
                     alpha_mode: AlphaMode::Blend,
                     double_sided: true,
                     cull_mode: None,
+                    perceptual_roughness: 1.0,
                     ..default()
                 }),
                 transform: Transform::from_translation(pos).with_rotation(tilt),
                 ..default()
             },
             OfPlanet(index),
+            NotShadowCaster,
         ));
     }
 
@@ -245,8 +301,8 @@ fn spawn_planet(
         PbrBundle {
             mesh: meshes.add(mesh::orbit(kind.radius() + 1.5, 0.8, orbit_tilt)),
             material: mats.add(StandardMaterial {
-                base_color: Color::srgba(0.6, 0.75, 1.0, 0.1),
-                emissive: LinearRgba::new(0.15, 0.2, 0.35, 1.0),
+                base_color: with_alpha(theme::ORBIT, 0.12),
+                emissive: theme::glow(theme::ORBIT, 0.28),
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
                 ..default()
@@ -255,6 +311,7 @@ fn spawn_planet(
             ..default()
         },
         OfPlanet(index),
+        NotShadowCaster,
     ));
 
     let cell_count = kind.cell_count();
@@ -262,11 +319,7 @@ fn spawn_planet(
         cmd.spawn((
             PbrBundle {
                 mesh: meshes.add(Sphere::new(0.18).mesh().ico(2).unwrap()),
-                material: mats.add(StandardMaterial {
-                    base_color: Color::srgb(0.2, 0.2, 0.25),
-                    metallic: 0.8,
-                    ..default()
-                }),
+                material: mats.add(soft_matte_material(theme::CELL_OFF, 0.0)),
                 transform: Transform::from_translation(pos),
                 ..default()
             },
@@ -284,12 +337,7 @@ fn spawn_planet(
         cmd.spawn((
             PbrBundle {
                 mesh: meshes.add(Capsule3d::new(0.15, 0.6)),
-                material: mats.add(StandardMaterial {
-                    base_color: Color::srgb(1.0, 0.35, 0.25),
-                    emissive: LinearRgba::new(0.5, 0.15, 0.1, 1.0),
-                    metallic: 0.9,
-                    ..default()
-                }),
+                material: mats.add(soft_matte_material(theme::ROCKET, 0.8)),
                 transform: Transform::from_translation(pos + Vec3::Y * (kind.radius() + 1.2)),
                 visibility: if p.has_rocket {
                     Visibility::Visible
@@ -313,75 +361,173 @@ fn spawn_ui(cmd: &mut Commands) {
             height: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
             justify_content: JustifyContent::SpaceBetween,
+            padding: UiRect::all(Val::Px(14.0)),
             ..default()
         },
         ..default()
     })
     .with_children(|p| {
-        p.spawn((
-            TextBundle::from_sections([
-                TextSection::new(
-                    "Galaxy Overview\n",
-                    TextStyle {
-                        font_size: 24.0,
-                        color: Color::srgb(0.85, 0.85, 0.9),
-                        ..default()
-                    },
-                ),
-                TextSection::new(
-                    "",
-                    TextStyle {
-                        font_size: 16.0,
-                        color: Color::srgb(0.7, 0.65, 0.5),
-                        ..default()
-                    },
-                ),
-            ])
-            .with_style(Style {
-                margin: UiRect::all(Val::Px(15.0)),
-                ..default()
-            }),
-            Hud,
-        ));
-
         p.spawn(NodeBundle {
             style: Style {
-                width: Val::Percent(100.0),
-                padding: UiRect::all(Val::Px(10.0)),
-                flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::Center,
-                flex_wrap: FlexWrap::Wrap,
-                column_gap: Val::Px(8.0),
-                row_gap: Val::Px(6.0),
+                max_width: Val::Px(430.0),
+                padding: UiRect::all(Val::Px(16.0)),
+                border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
-            background_color: Color::srgba(0.0, 0.0, 0.0, 0.5).into(),
+            background_color: theme::PANEL_BG.into(),
+            border_color: theme::BORDER.into(),
             ..default()
         })
         .with_children(|p| {
-            for action in Action::BAR {
-                p.spawn((
-                    ButtonBundle {
-                        style: Style {
-                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+            p.spawn((
+                TextBundle::from_sections([
+                    TextSection::new(
+                        "Galaxy Overview\n",
+                        TextStyle {
+                            font_size: 25.0,
+                            color: theme::TEXT_TITLE,
                             ..default()
                         },
-                        background_color: Color::srgba(0.15, 0.15, 0.2, 0.9).into(),
+                    ),
+                    TextSection::new(
+                        "",
+                        TextStyle {
+                            font_size: 15.0,
+                            color: theme::TEXT_BODY,
+                            ..default()
+                        },
+                    ),
+                ])
+                .with_style(Style {
+                    max_width: Val::Px(390.0),
+                    ..default()
+                }),
+                Hud,
+            ));
+        });
+
+        // Invisible layout row: the group boxes carry their own frames, so the
+        // bar itself draws nothing.
+        p.spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Stretch,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(10.0),
+                row_gap: Val::Px(10.0),
+                ..default()
+            },
+            ..default()
+        })
+        .with_children(|p| {
+            for (caption, actions) in Action::GROUPS {
+                p.spawn(NodeBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::all(Val::Px(8.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        row_gap: Val::Px(6.0),
                         ..default()
                     },
-                    Btn(action),
-                ))
+                    background_color: theme::PANEL_BG.into(),
+                    border_color: theme::BORDER.into(),
+                    ..default()
+                })
                 .with_children(|p| {
                     p.spawn(TextBundle::from_section(
-                        action.label(),
+                        caption,
                         TextStyle {
-                            font_size: 12.0,
-                            color: Color::srgb(0.85, 0.85, 0.9),
+                            font_size: 11.0,
+                            color: theme::TEXT_BODY,
                             ..default()
                         },
                     ));
+                    p.spawn(NodeBundle {
+                        style: Style {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::Center,
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: Val::Px(8.0),
+                            row_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        ..default()
+                    })
+                    .with_children(|p| {
+                        for &action in actions {
+                            p.spawn((
+                                ButtonBundle {
+                                    style: Style {
+                                        padding: UiRect::axes(Val::Px(11.0), Val::Px(7.0)),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        ..default()
+                                    },
+                                    background_color: theme::BTN_IDLE.into(),
+                                    border_color: theme::BORDER.into(),
+                                    ..default()
+                                },
+                                Btn(action),
+                            ))
+                            .with_children(|p| {
+                                p.spawn(TextBundle::from_section(
+                                    action.label(),
+                                    TextStyle {
+                                        font_size: 12.0,
+                                        color: theme::TEXT_BTN,
+                                        ..default()
+                                    },
+                                ));
+                            });
+                        }
+                    });
                 });
             }
         });
     });
+}
+
+fn matte_material(color: Color) -> StandardMaterial {
+    StandardMaterial {
+        base_color: color,
+        metallic: 0.0,
+        perceptual_roughness: 0.98,
+        reflectance: 0.14,
+        ..default()
+    }
+}
+
+fn soft_matte_material(color: Color, glow: f32) -> StandardMaterial {
+    StandardMaterial {
+        base_color: color,
+        emissive: theme::glow(color, glow),
+        metallic: 0.0,
+        perceptual_roughness: 0.92,
+        reflectance: 0.18,
+        ..default()
+    }
+}
+
+fn glowing_material(
+    color: Color,
+    intensity: f32,
+    alpha: f32,
+    alpha_mode: AlphaMode,
+) -> StandardMaterial {
+    StandardMaterial {
+        base_color: with_alpha(color, alpha),
+        emissive: theme::glow(color, intensity),
+        alpha_mode,
+        unlit: true,
+        ..default()
+    }
+}
+
+fn with_alpha(color: Color, alpha: f32) -> Color {
+    let c = color.to_srgba();
+    Color::srgba(c.red, c.green, c.blue, alpha)
 }

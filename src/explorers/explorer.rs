@@ -366,6 +366,7 @@ impl Explorer {
     // =========================================================================
     /// E ->> P: AvailableEnergyCellRequest(explorer_id)
     /// P ->> E: AvailableEnergyCellResponse(available_cells)
+    #[allow(dead_code)]
     fn ask_planet_for_available_energy_cells(
         &self,
     ) -> usize {
@@ -993,6 +994,7 @@ impl AI {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().ask_planet_to_combine_resource(c)
     }
+    #[allow(dead_code)]
     pub(crate) fn energy_cells(&self) -> usize {
         let (lock, _) = &*self.slot;
         lock.lock().unwrap().ask_planet_for_available_energy_cells()

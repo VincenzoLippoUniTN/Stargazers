@@ -24,7 +24,11 @@ impl Plugin for MotionPlugin {
     }
 }
 
-fn animate_planets(time: Res<Time>, state: Res<GameState>, mut q: Query<(&mut Transform, &Planet)>) {
+fn animate_planets(
+    time: Res<Time>,
+    state: Res<GameState>,
+    mut q: Query<(&mut Transform, &Planet)>,
+) {
     if state.paused {
         return;
     }
@@ -87,7 +91,11 @@ fn animate_rockets(
     }
 }
 
-fn animate_explorers(time: Res<Time>, state: Res<GameState>, mut q: Query<(&mut Transform, &mut Explorer)>) {
+fn animate_explorers(
+    time: Res<Time>,
+    state: Res<GameState>,
+    mut q: Query<(&mut Transform, &mut Explorer)>,
+) {
     if state.paused {
         return;
     }
@@ -97,8 +105,9 @@ fn animate_explorers(time: Res<Time>, state: Res<GameState>, mut q: Query<(&mut 
     for (mut tf, mut ex) in &mut q {
         match ex.target {
             Some(target) => {
-                ex.progress += dt * 2.5; // was 0.35 — finish each arc in ~0.33s, inside the 500ms hop window
-                let (Some(from), Some(to)) = (state.positions.get(ex.at), state.positions.get(target))
+                ex.progress += dt * 2.5; // was 0.35 - finish each arc in ~0.33s, inside the 500ms hop window
+                let (Some(from), Some(to)) =
+                    (state.positions.get(ex.at), state.positions.get(target))
                 else {
                     continue;
                 };
@@ -124,7 +133,11 @@ fn animate_explorers(time: Res<Time>, state: Res<GameState>, mut q: Query<(&mut 
                 };
                 ex.angle += dt * 0.5;
                 tf.translation = *home
-                    + Vec3::new(4.0 * ex.angle.cos(), 0.5 * (t * 0.8).sin(), 4.0 * ex.angle.sin());
+                    + Vec3::new(
+                        4.0 * ex.angle.cos(),
+                        0.5 * (t * 0.8).sin(),
+                        4.0 * ex.angle.sin(),
+                    );
                 tf.rotation = Quat::from_rotation_y(-ex.angle + PI * 0.5);
             }
         }

@@ -58,8 +58,9 @@ impl GalaxyLayout {
             })
             .collect();
 
-        let mut edges: Vec<(usize, usize)> =
-            (0..DEMO_PLANETS).map(|i| (i, (i + 1) % DEMO_PLANETS)).collect();
+        let mut edges: Vec<(usize, usize)> = (0..DEMO_PLANETS)
+            .map(|i| (i, (i + 1) % DEMO_PLANETS))
+            .collect();
         edges.push((0, 2));
         edges.push((1, 3));
 

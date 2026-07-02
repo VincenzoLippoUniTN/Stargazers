@@ -78,7 +78,7 @@ impl GameState {
     }
 
     pub fn zoom(&mut self, delta: f32) {
-        self.zoom = (self.zoom + delta).clamp(20.0, 90.0);
+        self.zoom = (self.zoom + delta).clamp(20.0, 150.0);
     }
 
     /// Replaces the report panel with `lines`, keeping only the newest entries so

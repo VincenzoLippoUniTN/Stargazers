@@ -27,6 +27,10 @@ pub struct Sun;
 #[derive(Component)]
 pub struct Corona(pub usize);
 
+/// One soft halo that follows the currently focused planet.
+#[derive(Component)]
+pub struct SelectionGlow;
+
 #[derive(Component)]
 pub struct Cell {
     pub planet: usize,
@@ -90,51 +94,72 @@ pub enum Action {
 }
 
 impl Action {
-    /// The buttons shown in the bottom bar, in order. Kept in one place so the
-    /// bar, the keyboard shortcuts and the click handler can't drift apart.
-    pub const BAR: [Action; 21] = [
-        Action::Mode,
-        Action::Prev,
-        Action::Next,
-        Action::Sunray,
-        Action::Pause,
-        Action::ZoomIn,
-        Action::ZoomOut,
-        Action::Asteroid,
-        Action::KillPlanet,
-        Action::ToggleAi,
-        Action::Move,
-        Action::SelExplorer,
-        Action::KillExplorer,
-        Action::ResetExplorer,
-        Action::Bag,
-        Action::Resources,
-        Action::Combinations,
-        Action::CycleBasic,
-        Action::Generate,
-        Action::CycleComplex,
-        Action::Combine,
+    /// The bottom-bar buttons, grouped under the captions the toolbar shows.
+    /// Kept in one place so the bar, the keyboard shortcuts and the click
+    /// handler can't drift apart.
+    pub const GROUPS: [(&'static str, &'static [Action]); 4] = [
+        (
+            "View",
+            &[
+                Action::Mode,
+                Action::Prev,
+                Action::Next,
+                Action::Pause,
+                Action::ZoomIn,
+                Action::ZoomOut,
+            ],
+        ),
+        (
+            "Planet",
+            &[
+                Action::Sunray,
+                Action::Asteroid,
+                Action::KillPlanet,
+                Action::ToggleAi,
+            ],
+        ),
+        (
+            "Explorer",
+            &[
+                Action::Move,
+                Action::SelExplorer,
+                Action::KillExplorer,
+                Action::ResetExplorer,
+                Action::Bag,
+            ],
+        ),
+        (
+            "Craft",
+            &[
+                Action::Resources,
+                Action::Combinations,
+                Action::CycleBasic,
+                Action::Generate,
+                Action::CycleComplex,
+                Action::Combine,
+            ],
+        ),
     ];
 
     pub fn label(self) -> &'static str {
         match self {
             Action::Mode => "Mode [P]",
-            Action::Prev => "Previous [<-]",
-            Action::Next => "Next [->]",
-            Action::Sunray => "Sun ray [S]",
+            Action::Prev => "Prev [<]",
+            Action::Next => "Next [>]",
+            Action::Sunray => "Sun [S]",
             Action::Pause => "Pause [Space]",
-            Action::ZoomIn => "Zoom in",
-            Action::ZoomOut => "Zoom out",
+            Action::ZoomIn => "Zoom +",
+            Action::ZoomOut => "Zoom -",
             Action::Asteroid => "Asteroid [A]",
             Action::KillPlanet => "Kill planet [K]",
-            Action::ToggleAi => "Toggle AI [I]",
-            Action::Move => "Move explorer [E]",
-            Action::SelExplorer => "Sel explorer [X]",
+            Action::ToggleAi => "AI [I]",
+            Action::Move => "Move [E]",
+            Action::SelExplorer => "Explorer [X]",
             Action::KillExplorer => "Kill explorer [J]",
-            Action::ResetExplorer => "Reset explorer [R]",
+            Action::ResetExplorer => "Reset [R]",
             Action::Bag => "Bag [B]",
             Action::Resources => "Resources [1]",
-            Action::Combinations => "Combines [2]",
+            Action::Combinations => "Recipes [2]",
             Action::CycleBasic => "Basic+ [N]",
             Action::Generate => "Generate [G]",
             Action::CycleComplex => "Complex+ [M]",

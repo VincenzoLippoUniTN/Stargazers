@@ -33,9 +33,15 @@ pub enum GalaxyCommand {
     /// Ask what combination recipes the explorer's current planet supports.
     SupportedCombinations { explorer_id: u32 },
     /// Ask the explorer's current planet to generate a basic resource.
-    Generate { explorer_id: u32, resource: BasicResourceType },
+    Generate {
+        explorer_id: u32,
+        resource: BasicResourceType,
+    },
     /// Ask the explorer's current planet to combine a complex resource.
-    Combine { explorer_id: u32, resource: ComplexResourceType },
+    Combine {
+        explorer_id: u32,
+        resource: ComplexResourceType,
+    },
     /// Ask the explorer to report its bag contents.
     BagContent { explorer_id: u32 },
 }

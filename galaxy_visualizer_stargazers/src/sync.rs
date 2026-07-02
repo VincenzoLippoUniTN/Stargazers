@@ -11,6 +11,8 @@ use crate::domain::components::{Cell, Explorer, OfPlanet, Planet, Rocket};
 use crate::domain::layout::GalaxyLayout;
 use crate::domain::state::GameState;
 use crate::feed::GalaxyFeed;
+use crate::scene;
+use crate::theme;
 use crate::VisualizerSet;
 
 pub struct SyncPlugin;
@@ -20,8 +22,7 @@ impl Plugin for SyncPlugin {
         app.add_systems(Update, ingest_feed.in_set(VisualizerSet::Ingest))
             .add_systems(
                 Update,
-                (sync_cell_visuals, sync_rockets, sync_static_visuals)
-                    .in_set(VisualizerSet::React),
+                (sync_cell_visuals, sync_rockets, sync_static_visuals).in_set(VisualizerSet::React),
             );
     }
 }
@@ -34,6 +35,8 @@ fn ingest_feed(
     mut planets: Query<&mut Planet>,
     mut explorers: Query<(Entity, &mut Explorer)>,
     mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
     let Some(feed) = feed else {
         return;
@@ -64,17 +67,33 @@ fn ingest_feed(
         let Some(target) = state.index_of(reported.at_planet) else {
             continue;
         };
+        let mut known = false;
         for (_entity, mut ex) in &mut explorers {
-            if ex.id == reported.id && ex.at != target && ex.target.is_none() {
-                ex.target = Some(target);
+            if ex.id == reported.id {
+                known = true;
+                if ex.at != target && ex.target.is_none() {
+                    ex.target = Some(target);
+                }
             }
+        }
+        // An explorer that joined the simulation after the scene was built has
+        // no entity yet; give it one, parked at its reported planet.
+        if !known {
+            scene::spawn_explorer(
+                &mut commands,
+                &mut meshes,
+                &mut mats,
+                reported.id,
+                target,
+                state.positions[target],
+            );
         }
     }
 
     // Despawn explorers the simulation no longer reports. A snapshot is a *full*
     // picture of the galaxy, and the producer drops an explorer from it only when
     // that explorer dies (see `VizBridge::remove_explorer`). So any live entity
-    // whose id is absent from the snapshot has died and must leave the screen —
+    // whose id is absent from the snapshot has died and must leave the screen -
     // including the very last one, whose death yields an empty explorer list.
     for (entity, ex) in &explorers {
         let still_present = snapshot.explorers.iter().any(|r| r.id == ex.id);
@@ -98,7 +117,14 @@ fn sync_cell_visuals(
         let planet = by_index.get(&cell.planet);
         let alive = planet.is_some_and(|p| p.alive);
 
-        set_visibility(&mut vis, if alive { Visibility::Inherited } else { Visibility::Hidden });
+        set_visibility(
+            &mut vis,
+            if alive {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            },
+        );
 
         let lit = alive
             && planet
@@ -109,10 +135,10 @@ fn sync_cell_visuals(
             cell.lit = lit;
             if let Some(mat) = mats.get_mut(handle) {
                 if lit {
-                    mat.base_color = Color::srgb(1.0, 0.95, 0.5);
-                    mat.emissive = LinearRgba::new(1.5, 1.3, 0.4, 1.0);
+                    mat.base_color = theme::CELL_ON;
+                    mat.emissive = theme::glow(theme::CELL_ON, 1.8);
                 } else {
-                    mat.base_color = Color::srgb(0.2, 0.2, 0.25);
+                    mat.base_color = theme::CELL_OFF;
                     mat.emissive = LinearRgba::NONE;
                 }
             }
@@ -123,8 +149,17 @@ fn sync_cell_visuals(
 fn sync_rockets(planets: Query<&Planet>, mut rockets: Query<(&Rocket, &mut Visibility)>) {
     let by_index: HashMap<usize, &Planet> = planets.iter().map(|p| (p.id, p)).collect();
     for (rocket, mut vis) in &mut rockets {
-        let show = by_index.get(&rocket.planet).is_some_and(|p| p.alive && p.has_rocket);
-        set_visibility(&mut vis, if show { Visibility::Visible } else { Visibility::Hidden });
+        let show = by_index
+            .get(&rocket.planet)
+            .is_some_and(|p| p.alive && p.has_rocket);
+        set_visibility(
+            &mut vis,
+            if show {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            },
+        );
     }
 }
 
@@ -132,7 +167,14 @@ fn sync_static_visuals(planets: Query<&Planet>, mut q: Query<(&OfPlanet, &mut Vi
     let alive: HashMap<usize, bool> = planets.iter().map(|p| (p.id, p.alive)).collect();
     for (of, mut vis) in &mut q {
         let visible = alive.get(&of.0).copied().unwrap_or(true);
-        set_visibility(&mut vis, if visible { Visibility::Inherited } else { Visibility::Hidden });
+        set_visibility(
+            &mut vis,
+            if visible {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            },
+        );
     }
 }
 

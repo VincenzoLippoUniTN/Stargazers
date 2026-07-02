@@ -5,6 +5,7 @@ use common_game::components::planet::PlanetType;
 use common_game::components::resource::{BasicResourceType, ComplexResourceType};
 use common_game::components::resource::BasicResourceType::{Carbon, Hydrogen, Oxygen, Silicon};
 use common_game::components::resource::ComplexResourceType::{Diamond, Life, Robot, Water, Dolphin, AIPartner};
+use common_game::logging::Channel;
 use common_game::utils::ID;
 
 use crate::explorers::BagSnapshot;
@@ -43,7 +44,7 @@ impl PlanetInfo {
     fn is_dangerous(&self) -> bool {
         matches!(self.kind, Some(PlanetType::B) | Some(PlanetType::D))
     }
-    fn forget_random(&mut self, rng: &mut impl Rng, id: ID) {
+    fn forget_random(&mut self, rng: &mut impl Rng, id: ID, ai: &AI) {
         let mut forgotten = String::new();
         if rng.gen_bool(FORGET_FIELD_CHANCE) { self.gen_recipes  = None; forgotten += "generation recipes, "; }
         if rng.gen_bool(FORGET_FIELD_CHANCE) { self.comb_recipes = None; forgotten += "combination recipes, "; }
@@ -54,10 +55,10 @@ impl PlanetInfo {
         if forgotten.is_empty() { return; }
 
         let forgotten = forgotten.trim_end_matches(", ");
-        println!("[Eleanor] amnesia on planet {:?}: forgot {}", id, forgotten);
-        // debug!("[Eleanor] amnesia on planet {:?}: forgot {}", id, forgotten);
+        ai.log(Channel::Info, &format!("[Eleanor] amnesia on planet {:?}: forgot {}", id, forgotten));
     }
-    // fn forget(&mut self) { *self = Self::new(); }
+    #[allow(dead_code)]
+    fn forget(&mut self) { *self = Self::new(); }
 }
 
 // --- States & Knowledge ------------------
@@ -124,7 +125,7 @@ impl Eleanor {
             self.knowledge_state = self.decide();
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        println!("[Eleanor] Bweh..."); // TODO
+        self.ai.log(Channel::Info, "[Eleanor] Bweh...");
     }
 
     fn decide(&mut self) -> KnowledgeState {
@@ -232,7 +233,7 @@ impl Eleanor {
                         Ok(()) => {
                             self.knowledge.inventory = self.ai.bag();
                             self.objectives.pop();
-                            println!("[Eleanor] Combined {:?}", resource); // TODO
+                            self.ai.log(Channel::Info, &format!("[Eleanor] Combined {:?}", resource));
                         }
                         Err(_) => { /* retry next tick */ }
                     }
@@ -362,12 +363,12 @@ impl Eleanor {
         // Weighted by "difficulty" — favour simpler ones so the explorer
         // does useful work rather than always aiming for AIPartner
         let weights: &[usize] = &[
-            3, // Water     — easy, 2 ingredients
-            3, // Diamond   — easy, 2 of same
-            2, // Life      — medium
-            2, // Robot     — medium
-            2, // Dolphin   — medium
-            1, // AIPartner — hardest
+            2, // Water     — easy, 2 ingredients
+            2, // Diamond   — easy, 2 of same
+            1, // Life
+            1, // Robot
+            1, // Dolphin
+            1, // AIPartner
         ];
 
         // Simple weighted pick using the current planet id as entropy seed
@@ -456,7 +457,7 @@ impl Eleanor {
         let victim = ids[rng.gen_range(0..ids.len())];
 
         if let Some(info) = self.knowledge.planets_info.get_mut(&victim) {
-            info.forget_random(&mut rng, victim);
+            info.forget_random(&mut rng, victim, &self.ai);
         }
 
         if victim == self.knowledge.current_planet {

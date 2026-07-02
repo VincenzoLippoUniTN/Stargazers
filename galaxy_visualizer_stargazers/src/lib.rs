@@ -26,6 +26,7 @@ mod motion;
 mod report;
 mod scene;
 mod sync;
+mod theme;
 mod view;
 
 use bevy::prelude::*;
@@ -61,14 +62,19 @@ impl Plugin for GalaxyVisualizerPlugin {
             Source::Demo
         };
 
-        app.insert_resource(ClearColor(Color::srgb(0.01, 0.01, 0.03)))
+        app.insert_resource(ClearColor(theme::SPACE))
             .insert_resource(GameState {
                 source,
                 ..default()
             })
             .configure_sets(
                 Update,
-                (VisualizerSet::Ingest, VisualizerSet::Build, VisualizerSet::React).chain(),
+                (
+                    VisualizerSet::Ingest,
+                    VisualizerSet::Build,
+                    VisualizerSet::React,
+                )
+                    .chain(),
             )
             .add_plugins((
                 scene::ScenePlugin,

@@ -21,6 +21,7 @@ use crate::command::{CommandSink, GalaxyCommand, BASIC_CHOICES, COMPLEX_CHOICES}
 use crate::domain::components::{Action, Btn, Explorer, Planet};
 use crate::domain::state::GameState;
 use crate::report::ReportFeed;
+use crate::theme;
 
 pub struct InteractionPlugin;
 
@@ -199,19 +200,34 @@ fn dispatch(
         }
         Action::Combinations => {
             if let Some(explorer_id) = selected_explorer(state, explorers) {
-                emit(commands, GalaxyCommand::SupportedCombinations { explorer_id });
+                emit(
+                    commands,
+                    GalaxyCommand::SupportedCombinations { explorer_id },
+                );
             }
         }
         Action::Generate => {
             if let Some(explorer_id) = selected_explorer(state, explorers) {
                 let resource = BASIC_CHOICES[state.basic_choice];
-                emit(commands, GalaxyCommand::Generate { explorer_id, resource });
+                emit(
+                    commands,
+                    GalaxyCommand::Generate {
+                        explorer_id,
+                        resource,
+                    },
+                );
             }
         }
         Action::Combine => {
             if let Some(explorer_id) = selected_explorer(state, explorers) {
                 let resource = COMPLEX_CHOICES[state.complex_choice];
-                emit(commands, GalaxyCommand::Combine { explorer_id, resource });
+                emit(
+                    commands,
+                    GalaxyCommand::Combine {
+                        explorer_id,
+                        resource,
+                    },
+                );
             }
         }
     }
@@ -268,13 +284,17 @@ fn emit(commands: &Option<Res<CommandSink>>, command: GalaxyCommand) {
     }
 }
 
-fn style_buttons(mut q: Query<(&Interaction, &mut BackgroundColor), With<Button>>) {
-    for (inter, mut bg) in &mut q {
-        bg.0 = match inter {
-            Interaction::Pressed => Color::srgba(0.35, 0.35, 0.5, 1.0),
-            Interaction::Hovered => Color::srgba(0.25, 0.25, 0.35, 0.95),
-            Interaction::None => Color::srgba(0.15, 0.15, 0.2, 0.9),
+fn style_buttons(
+    mut q: Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<Button>>,
+) {
+    for (inter, mut bg, mut border) in &mut q {
+        let (fill, line) = match inter {
+            Interaction::Pressed => (theme::BTN_PRESSED, theme::SELECTION),
+            Interaction::Hovered => (theme::BTN_HOVER, theme::SELECTION),
+            Interaction::None => (theme::BTN_IDLE, theme::BORDER),
         };
+        bg.0 = fill;
+        border.0 = line;
     }
 }
 
@@ -316,12 +336,17 @@ fn request_move_explorer(
             };
             let neighbors = state.neighbors(at);
             if neighbors.is_empty() {
-                state.set_report(vec![format!("Explorer {explorer_id} has no reachable neighbour")]);
+                state.set_report(vec![format!(
+                    "Explorer {explorer_id} has no reachable neighbour"
+                )]);
                 return;
             }
             let target = neighbors[rng.gen_range(0..neighbors.len())];
             if let Some(&to_planet) = state.planet_ids.get(target) {
-                sink.send(GalaxyCommand::MoveExplorer { explorer_id, to_planet });
+                sink.send(GalaxyCommand::MoveExplorer {
+                    explorer_id,
+                    to_planet,
+                });
             }
         }
         None => {

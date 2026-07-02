@@ -27,6 +27,10 @@ pub struct Sun;
 #[derive(Component)]
 pub struct Corona(pub usize);
 
+/// One soft halo that follows the currently focused planet.
+#[derive(Component)]
+pub struct SelectionGlow;
+
 #[derive(Component)]
 pub struct Cell {
     pub planet: usize,
@@ -119,22 +123,22 @@ impl Action {
     pub fn label(self) -> &'static str {
         match self {
             Action::Mode => "Mode [P]",
-            Action::Prev => "Previous [<-]",
-            Action::Next => "Next [->]",
-            Action::Sunray => "Sun ray [S]",
+            Action::Prev => "Prev [←]",
+            Action::Next => "Next [→]",
+            Action::Sunray => "Sun [S]",
             Action::Pause => "Pause [Space]",
-            Action::ZoomIn => "Zoom in",
-            Action::ZoomOut => "Zoom out",
+            Action::ZoomIn => "Zoom +",
+            Action::ZoomOut => "Zoom −",
             Action::Asteroid => "Asteroid [A]",
             Action::KillPlanet => "Kill planet [K]",
-            Action::ToggleAi => "Toggle AI [I]",
-            Action::Move => "Move explorer [E]",
-            Action::SelExplorer => "Sel explorer [X]",
+            Action::ToggleAi => "AI [I]",
+            Action::Move => "Move [E]",
+            Action::SelExplorer => "Explorer [X]",
             Action::KillExplorer => "Kill explorer [J]",
-            Action::ResetExplorer => "Reset explorer [R]",
+            Action::ResetExplorer => "Reset [R]",
             Action::Bag => "Bag [B]",
             Action::Resources => "Resources [1]",
-            Action::Combinations => "Combines [2]",
+            Action::Combinations => "Recipes [2]",
             Action::CycleBasic => "Basic+ [N]",
             Action::Generate => "Generate [G]",
             Action::CycleComplex => "Complex+ [M]",

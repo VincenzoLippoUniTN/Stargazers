@@ -15,15 +15,17 @@
 use std::thread;
 use std::time::Duration;
 
+use super::explorer::AI;
 use common_game::logging::Channel;
 use rand::Rng;
-use super::explorer::AI;
 
 /// ROAMER — hops to the first neighbour it can find, harvests a little on each
 /// planet, and keeps moving. Good for the "explore the map" instance.
 pub fn roaming_explorer(ai: AI) {
     loop {
-        if ai.is_killed() { return; }
+        if ai.is_killed() {
+            return;
+        }
         // Learn what this planet actually supports before doing anything.
         let _ = ai.discover_resources();
         let _ = ai.discover_combinations();
@@ -35,7 +37,10 @@ pub fn roaming_explorer(ai: AI) {
             let _ = ai.combine(c);
         }
 
-        ai.log(Channel::Debug, &format!("harvested on planet {}", ai.current_planet()));
+        ai.log(
+            Channel::Debug,
+            &format!("harvested on planet {}", ai.current_planet()),
+        );
         thread::sleep(Duration::from_millis(1000));
 
         // Move to a random live neighbour.
@@ -68,7 +73,9 @@ pub fn harvesting_explorer(ai: AI) {
     const GIVE_UP_AFTER: u32 = 5;
 
     loop {
-        if ai.is_killed() { return; }
+        if ai.is_killed() {
+            return;
+        }
         let _ = ai.discover_resources();
         let _ = ai.discover_combinations();
 
@@ -87,24 +94,32 @@ pub fn harvesting_explorer(ai: AI) {
 
         if any_success {
             consecutive_failures = 0;
-            ai.log(Channel::Debug, &format!(
-                "harvest tick — planet={}", ai.current_planet()
-            ));
+            ai.log(
+                Channel::Debug,
+                &format!("harvest tick — planet={}", ai.current_planet()),
+            );
         } else {
             consecutive_failures += 1;
-            ai.log(Channel::Warning, &format!(
-                "planet {} uncooperative ({consecutive_failures}/{GIVE_UP_AFTER})",
-                ai.current_planet()
-            ));
+            ai.log(
+                Channel::Warning,
+                &format!(
+                    "planet {} uncooperative ({consecutive_failures}/{GIVE_UP_AFTER})",
+                    ai.current_planet()
+                ),
+            );
 
             if consecutive_failures >= GIVE_UP_AFTER {
                 consecutive_failures = 0;
                 if ai.request_neighbors().is_ok() {
                     let neighbors = ai.neighbors();
                     if let Some(&dst) = neighbors.first() {
-                        ai.log(Channel::Warning, &format!(
-                            "giving up on planet {}, moving to {dst}", ai.current_planet()
-                        ));
+                        ai.log(
+                            Channel::Warning,
+                            &format!(
+                                "giving up on planet {}, moving to {dst}",
+                                ai.current_planet()
+                            ),
+                        );
                         let _ = ai.travel(dst);
                     }
                 }

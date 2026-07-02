@@ -97,10 +97,9 @@ impl VizBridge {
     /// If the planet was never registered, its kind is guessed from the cell count
     /// (see [`PlanetKind::from_cell_count`]); prefer registering it explicitly.
     pub fn update_planet(&mut self, id: ID, state: &DummyPlanetState) {
-        let view = self
-            .planets
-            .entry(id)
-            .or_insert_with(|| PlanetView::new(PlanetKind::from_cell_count(state.energy_cells.len())));
+        let view = self.planets.entry(id).or_insert_with(|| {
+            PlanetView::new(PlanetKind::from_cell_count(state.energy_cells.len()))
+        });
         view.cells = state.energy_cells.clone();
         view.has_rocket = state.has_rocket;
     }

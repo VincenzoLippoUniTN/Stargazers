@@ -1,17 +1,19 @@
-use std::collections::{HashMap, HashSet};
 use rand::Rng;
+use std::collections::{HashMap, HashSet};
 
 use common_game::components::planet::PlanetType;
-use common_game::components::resource::{BasicResourceType, ComplexResourceType};
 use common_game::components::resource::BasicResourceType::{Carbon, Hydrogen, Oxygen, Silicon};
-use common_game::components::resource::ComplexResourceType::{Diamond, Life, Robot, Water, Dolphin, AIPartner};
+use common_game::components::resource::ComplexResourceType::{
+    AIPartner, Diamond, Dolphin, Life, Robot, Water,
+};
+use common_game::components::resource::{BasicResourceType, ComplexResourceType};
 use common_game::utils::ID;
 
 use crate::explorers::BagSnapshot;
 use crate::explorers::explorer::AI;
 
 const FORGET_CHANCE_PER_TICK: f64 = 0.02; // how often an amnesia attempt fires
-const FORGET_FIELD_CHANCE:    f64 = 0.2;  // per-fact drop chance; lower = rarer, and less likely to drop >1
+const FORGET_FIELD_CHANCE: f64 = 0.2; // per-fact drop chance; lower = rarer, and less likely to drop >1
 
 #[derive(Debug, Clone)]
 struct PlanetInfo {
@@ -24,16 +26,20 @@ struct PlanetInfo {
 impl PlanetInfo {
     fn new() -> Self {
         Self {
-            gen_recipes:  None,
+            gen_recipes: None,
             comb_recipes: None,
-            kind:         None,
-            neighbours:   None,
+            kind: None,
+            neighbours: None,
         }
     }
 
     // --- Convenience queries ---
-    fn can_generate(&self, r: &BasicResourceType) -> bool { self.gen_recipes.as_ref().map_or(false, |s| s.contains(r)) }
-    fn can_combine(&self, r: &ComplexResourceType) -> bool { self.comb_recipes.as_ref().map_or(false, |s| s.contains(r)) }
+    fn can_generate(&self, r: &BasicResourceType) -> bool {
+        self.gen_recipes.as_ref().map_or(false, |s| s.contains(r))
+    }
+    fn can_combine(&self, r: &ComplexResourceType) -> bool {
+        self.comb_recipes.as_ref().map_or(false, |s| s.contains(r))
+    }
     fn is_fully_known(&self) -> bool {
         self.gen_recipes.is_some()
             && self.comb_recipes.is_some()
@@ -45,13 +51,24 @@ impl PlanetInfo {
     }
     fn forget_random(&mut self, rng: &mut impl Rng, id: ID) {
         let mut forgotten = String::new();
-        if rng.gen_bool(FORGET_FIELD_CHANCE) { self.gen_recipes  = None; forgotten += "generation recipes, "; }
-        if rng.gen_bool(FORGET_FIELD_CHANCE) { self.comb_recipes = None; forgotten += "combination recipes, "; }
-        if rng.gen_bool(FORGET_FIELD_CHANCE) { self.neighbours   = None; forgotten += "neighbours, "; }
+        if rng.gen_bool(FORGET_FIELD_CHANCE) {
+            self.gen_recipes = None;
+            forgotten += "generation recipes, ";
+        }
+        if rng.gen_bool(FORGET_FIELD_CHANCE) {
+            self.comb_recipes = None;
+            forgotten += "combination recipes, ";
+        }
+        if rng.gen_bool(FORGET_FIELD_CHANCE) {
+            self.neighbours = None;
+            forgotten += "neighbours, ";
+        }
         // Kind can't be forgotten by choice. It would be inefficient for the marginal use it has to forget and recompute it,
         // so I leave it alone. Let's say Eleanor's brain doesn't struggle as much to remember useless info
 
-        if forgotten.is_empty() { return; }
+        if forgotten.is_empty() {
+            return;
+        }
 
         let forgotten = forgotten.trim_end_matches(", ");
         println!("[Eleanor] amnesia on planet {:?}: forgot {}", id, forgotten);
@@ -117,8 +134,12 @@ impl Eleanor {
 
     pub fn run(&mut self) {
         while !self.ai.is_killed() {
-            while self.ai.is_stopped() { std::thread::sleep(std::time::Duration::from_millis(1000)); }
-            if self.ai.take_reset() { self.reset(); }
+            while self.ai.is_stopped() {
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+            if self.ai.take_reset() {
+                self.reset();
+            }
 
             self.maybe_forget();
             self.knowledge_state = self.decide();
@@ -131,11 +152,17 @@ impl Eleanor {
         // Knowledge always takes priority — act() is only safe when Deciding
         match self.knowledge_state {
             KnowledgeState::Unknowing => {
-                self.knowledge.planets_info.insert(self.knowledge.current_planet, PlanetInfo::new());
+                self.knowledge
+                    .planets_info
+                    .insert(self.knowledge.current_planet, PlanetInfo::new());
                 KnowledgeState::Amnesiac
-            },
+            }
             KnowledgeState::DeducingPlanetType => {
-                let planet_info = self.knowledge.planets_info.get_mut(&self.knowledge.current_planet).unwrap();
+                let planet_info = self
+                    .knowledge
+                    .planets_info
+                    .get_mut(&self.knowledge.current_planet)
+                    .unwrap();
                 if planet_info.comb_recipes.as_ref().unwrap().is_empty() {
                     if planet_info.gen_recipes.as_ref().unwrap().len() > 1 {
                         planet_info.kind = Some(PlanetType::D);
@@ -149,39 +176,68 @@ impl Eleanor {
                 }
 
                 KnowledgeState::Amnesiac
-            },
+            }
             KnowledgeState::NeedGenerationRecipes => {
-                if let Ok(()) = self.ai.discover_resources(){
-                    self.knowledge.planets_info.get_mut(&self.knowledge.current_planet).unwrap().gen_recipes = Some(self.ai.known_resources());
+                if let Ok(()) = self.ai.discover_resources() {
+                    self.knowledge
+                        .planets_info
+                        .get_mut(&self.knowledge.current_planet)
+                        .unwrap()
+                        .gen_recipes = Some(self.ai.known_resources());
                 }
                 KnowledgeState::Amnesiac
-            },
+            }
             KnowledgeState::NeedCombinationRecipes => {
-                if let Ok(()) = self.ai.discover_combinations(){
-                    self.knowledge.planets_info.get_mut(&self.knowledge.current_planet).unwrap().comb_recipes = Some(self.ai.known_combinations());
+                if let Ok(()) = self.ai.discover_combinations() {
+                    self.knowledge
+                        .planets_info
+                        .get_mut(&self.knowledge.current_planet)
+                        .unwrap()
+                        .comb_recipes = Some(self.ai.known_combinations());
                 }
                 KnowledgeState::Amnesiac
-            },
+            }
             KnowledgeState::NeedNeighbours => {
-                if let Ok(()) = self.ai.request_neighbors(){
-                    self.knowledge.planets_info.get_mut(&self.knowledge.current_planet).unwrap().neighbours = Some(self.ai.neighbors());
+                if let Ok(()) = self.ai.request_neighbors() {
+                    self.knowledge
+                        .planets_info
+                        .get_mut(&self.knowledge.current_planet)
+                        .unwrap()
+                        .neighbours = Some(self.ai.neighbors());
                 }
                 KnowledgeState::Amnesiac
-            },
+            }
             KnowledgeState::Amnesiac => {
-                match self.knowledge.planets_info.get_mut(&self.knowledge.current_planet) {
-                    None => { KnowledgeState::Unknowing }
+                match self
+                    .knowledge
+                    .planets_info
+                    .get_mut(&self.knowledge.current_planet)
+                {
+                    None => KnowledgeState::Unknowing,
                     Some(planet_info) => {
-                        if planet_info.is_fully_known() { return KnowledgeState::Deciding }
-                        if planet_info.gen_recipes.is_none() { return KnowledgeState::NeedGenerationRecipes }
-                        if planet_info.comb_recipes.is_none() { return KnowledgeState::NeedCombinationRecipes }
-                        if planet_info.neighbours.is_none() { return KnowledgeState::NeedNeighbours }
-                        if planet_info.kind.is_none() { return KnowledgeState::DeducingPlanetType }
+                        if planet_info.is_fully_known() {
+                            return KnowledgeState::Deciding;
+                        }
+                        if planet_info.gen_recipes.is_none() {
+                            return KnowledgeState::NeedGenerationRecipes;
+                        }
+                        if planet_info.comb_recipes.is_none() {
+                            return KnowledgeState::NeedCombinationRecipes;
+                        }
+                        if planet_info.neighbours.is_none() {
+                            return KnowledgeState::NeedNeighbours;
+                        }
+                        if planet_info.kind.is_none() {
+                            return KnowledgeState::DeducingPlanetType;
+                        }
                         KnowledgeState::Amnesiac
                     }
                 }
-            },
-            KnowledgeState::Deciding => { self.act(); KnowledgeState::Amnesiac },
+            }
+            KnowledgeState::Deciding => {
+                self.act();
+                KnowledgeState::Amnesiac
+            }
         }
     }
 
@@ -201,7 +257,9 @@ impl Eleanor {
             }
 
             Objective::GatherBasic(resource) => {
-                let can_gen = self.knowledge.planets_info
+                let can_gen = self
+                    .knowledge
+                    .planets_info
                     .get(&self.knowledge.current_planet)
                     .map_or(false, |info| info.can_generate(&resource));
 
@@ -214,7 +272,9 @@ impl Eleanor {
                         Err(_) => { /* retry next tick */ }
                     }
                 } else {
-                    if self.find_planet_that_generates(&resource).is_none() && !self.has_unexplored_neighbours() {
+                    if self.find_planet_that_generates(&resource).is_none()
+                        && !self.has_unexplored_neighbours()
+                    {
                         self.abort_current_objective();
                     } else {
                         self.objectives.push(Objective::FindGeneratorFor(resource));
@@ -223,7 +283,9 @@ impl Eleanor {
             }
 
             Objective::CombineInto(resource) => {
-                let can_comb = self.knowledge.planets_info
+                let can_comb = self
+                    .knowledge
+                    .planets_info
                     .get(&self.knowledge.current_planet)
                     .map_or(false, |info| info.can_combine(&resource));
 
@@ -237,7 +299,9 @@ impl Eleanor {
                         Err(_) => { /* retry next tick */ }
                     }
                 } else {
-                    if self.find_planet_that_combines(&resource).is_none() && !self.has_unexplored_neighbours() {
+                    if self.find_planet_that_combines(&resource).is_none()
+                        && !self.has_unexplored_neighbours()
+                    {
                         self.abort_current_objective();
                     } else {
                         self.objectives.push(Objective::FindCombinerFor(resource));
@@ -251,14 +315,12 @@ impl Eleanor {
                         self.objectives.pop();
                         self.objectives.push(Objective::Relocate(dst));
                     }
-                    None => {
-                        match self.pick_unexplored_neighbour().copied() {
-                            Some(next) => self.objectives.push(Objective::Relocate(next)),
-                            None => {
-                                self.abort_current_objective();
-                            }
+                    None => match self.pick_unexplored_neighbour().copied() {
+                        Some(next) => self.objectives.push(Objective::Relocate(next)),
+                        None => {
+                            self.abort_current_objective();
                         }
-                    }
+                    },
                 }
             }
 
@@ -268,32 +330,29 @@ impl Eleanor {
                         self.objectives.pop();
                         self.objectives.push(Objective::Relocate(dst));
                     }
-                    None => {
-                        match self.pick_unexplored_neighbour().copied() {
-                            Some(next) => self.objectives.push(Objective::Relocate(next)),
-                            None => {
-                                self.abort_current_objective();
-                            }
+                    None => match self.pick_unexplored_neighbour().copied() {
+                        Some(next) => self.objectives.push(Objective::Relocate(next)),
+                        None => {
+                            self.abort_current_objective();
                         }
-                    }
+                    },
                 }
             }
 
-            Objective::Relocate(dst) => {
-                match self.ai.travel(dst) {
-                    Ok(()) => {
-                        self.knowledge.current_planet = dst;
-                        self.knowledge.planets_info
-                            .entry(dst)
-                            .or_insert_with(PlanetInfo::new);
-                        self.knowledge_state = KnowledgeState::Amnesiac;
-                        self.objectives.pop();
-                    }
-                    Err(_) => {
-                        self.on_planet_destroyed(dst);
-                    }
+            Objective::Relocate(dst) => match self.ai.travel(dst) {
+                Ok(()) => {
+                    self.knowledge.current_planet = dst;
+                    self.knowledge
+                        .planets_info
+                        .entry(dst)
+                        .or_insert_with(PlanetInfo::new);
+                    self.knowledge_state = KnowledgeState::Amnesiac;
+                    self.objectives.pop();
                 }
-            }
+                Err(_) => {
+                    self.on_planet_destroyed(dst);
+                }
+            },
         }
     }
 
@@ -322,8 +381,12 @@ impl Eleanor {
 
         match target {
             Water => {
-                if !self.has_basic(Hydrogen) { self.objectives.push(Objective::GatherBasic(Hydrogen)); }
-                if !self.has_basic(Oxygen)   { self.objectives.push(Objective::GatherBasic(Oxygen));   }
+                if !self.has_basic(Hydrogen) {
+                    self.objectives.push(Objective::GatherBasic(Hydrogen));
+                }
+                if !self.has_basic(Oxygen) {
+                    self.objectives.push(Objective::GatherBasic(Oxygen));
+                }
             }
             Diamond => {
                 for _ in 0..(2usize.saturating_sub(self.count_basic(Carbon))) {
@@ -331,20 +394,36 @@ impl Eleanor {
                 }
             }
             Life => {
-                if !self.has_complex(Water)  { self.objectives.push(Objective::Produce(Water));         }
-                if !self.has_basic(Carbon)   { self.objectives.push(Objective::GatherBasic(Carbon));    }
+                if !self.has_complex(Water) {
+                    self.objectives.push(Objective::Produce(Water));
+                }
+                if !self.has_basic(Carbon) {
+                    self.objectives.push(Objective::GatherBasic(Carbon));
+                }
             }
             Robot => {
-                if !self.has_complex(Life)   { self.objectives.push(Objective::Produce(Life));          }
-                if !self.has_basic(Silicon)  { self.objectives.push(Objective::GatherBasic(Silicon));   }
+                if !self.has_complex(Life) {
+                    self.objectives.push(Objective::Produce(Life));
+                }
+                if !self.has_basic(Silicon) {
+                    self.objectives.push(Objective::GatherBasic(Silicon));
+                }
             }
             Dolphin => {
-                if !self.has_complex(Water)  { self.objectives.push(Objective::Produce(Water));         }
-                if !self.has_complex(Life)   { self.objectives.push(Objective::Produce(Life));          }
+                if !self.has_complex(Water) {
+                    self.objectives.push(Objective::Produce(Water));
+                }
+                if !self.has_complex(Life) {
+                    self.objectives.push(Objective::Produce(Life));
+                }
             }
             AIPartner => {
-                if !self.has_complex(Robot)   { self.objectives.push(Objective::Produce(Robot));        }
-                if !self.has_complex(Diamond) { self.objectives.push(Objective::Produce(Diamond));      }
+                if !self.has_complex(Robot) {
+                    self.objectives.push(Objective::Produce(Robot));
+                }
+                if !self.has_complex(Diamond) {
+                    self.objectives.push(Objective::Produce(Diamond));
+                }
             }
         }
     }
@@ -355,9 +434,8 @@ impl Eleanor {
 
     fn push_random_objective(&mut self) {
         // All possible complex resources
-        const ALL_COMPLEX: &[ComplexResourceType] = &[
-            Water, Diamond, Life, Robot, Dolphin, AIPartner,
-        ];
+        const ALL_COMPLEX: &[ComplexResourceType] =
+            &[Water, Diamond, Life, Robot, Dolphin, AIPartner];
 
         // Weighted by "difficulty" — favour simpler ones so the explorer
         // does useful work rather than always aiming for AIPartner
@@ -409,9 +487,8 @@ impl Eleanor {
         }
 
         // Purge all Relocate(dead_planet) from the objective stack
-        self.objectives.retain(|obj| {
-            !matches!(obj, Objective::Relocate(id) if *id == dead_planet)
-        });
+        self.objectives
+            .retain(|obj| !matches!(obj, Objective::Relocate(id) if *id == dead_planet));
     }
 
     // -------------------------------------------------------------------------
@@ -428,7 +505,9 @@ impl Eleanor {
                     self.objectives.pop();
                     break;
                 }
-                _ => { self.objectives.pop(); }
+                _ => {
+                    self.objectives.pop();
+                }
             }
         }
     }
@@ -449,10 +528,14 @@ impl Eleanor {
 
     fn maybe_forget(&mut self) {
         let mut rng = rand::thread_rng();
-        if !rng.gen_bool(FORGET_CHANCE_PER_TICK) { return; }
+        if !rng.gen_bool(FORGET_CHANCE_PER_TICK) {
+            return;
+        }
 
         let ids: Vec<ID> = self.knowledge.planets_info.keys().copied().collect();
-        if ids.is_empty() { return; }
+        if ids.is_empty() {
+            return;
+        }
         let victim = ids[rng.gen_range(0..ids.len())];
 
         if let Some(info) = self.knowledge.planets_info.get_mut(&victim) {
@@ -478,24 +561,37 @@ impl Eleanor {
         let mut dangerous_fallback = None;
         for (id, info) in self.knowledge.planets_info.iter() {
             if info.can_generate(r) {
-                if info.is_dangerous() { dangerous_fallback.get_or_insert(id); }
-                else { return Some(id); }
+                if info.is_dangerous() {
+                    dangerous_fallback.get_or_insert(id);
+                } else {
+                    return Some(id);
+                }
             }
         }
         dangerous_fallback
     }
 
     fn find_planet_that_combines(&self, r: &ComplexResourceType) -> Option<&ID> {
-        self.knowledge.planets_info.iter()
+        self.knowledge
+            .planets_info
+            .iter()
             .find_map(|(id, info)| info.can_combine(r).then_some(id))
     }
 
     fn pick_unexplored_neighbour(&self) -> Option<&ID> {
-        let neighbours = self.knowledge.planets_info.get(&self.knowledge.current_planet)?.neighbours.as_ref().unwrap();
+        let neighbours = self
+            .knowledge
+            .planets_info
+            .get(&self.knowledge.current_planet)?
+            .neighbours
+            .as_ref()
+            .unwrap();
 
-        neighbours.iter()
+        neighbours
+            .iter()
             .find(|id| {
-                self.knowledge.planets_info
+                self.knowledge
+                    .planets_info
                     .get(id)
                     .map_or(true, |info| !info.is_fully_known())
             })

@@ -1,13 +1,18 @@
-use crossbeam_channel::{Sender, Receiver};
-use common_game::components::planet::{DummyPlanetState, Planet, PlanetAI, PlanetState, PlanetType};
-use common_game::components::resource::{BasicResourceType, ComplexResourceType, Combinator, Generator, BasicResource, ComplexResourceRequest, ComplexResource};
+use common_game::components::planet::{
+    DummyPlanetState, Planet, PlanetAI, PlanetState, PlanetType,
+};
+use common_game::components::resource::{
+    BasicResource, BasicResourceType, Combinator, ComplexResource, ComplexResourceRequest,
+    ComplexResourceType, Generator,
+};
 use common_game::components::rocket::Rocket;
 use common_game::components::sunray::Sunray;
-use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
+use common_game::logging::{ActorType, Channel, EventType, LogEvent, Participant, Payload};
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
-use common_game::logging::{LogEvent, ActorType, EventType, Channel, Payload, Participant};
+use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
 use common_game::utils::ID;
-use log::{info, error};
+use crossbeam_channel::{Receiver, Sender};
+use log::{error, info};
 
 // Group-defined AI struct
 struct AI {
@@ -16,7 +21,6 @@ struct AI {
 }
 
 impl AI {
-
     fn log_resource_generation(
         explorer_id: u32,
         planet_id: u32,
@@ -28,12 +32,23 @@ impl AI {
         let mut payload = Payload::new();
         payload.insert("action".to_string(), "generate_resource".to_string());
         match resource_type {
-            BasicResourceType::Oxygen =>  payload.insert("resource_type".to_string(), "Oxygen".to_string()),
-            BasicResourceType::Hydrogen =>  payload.insert("resource_type".to_string(), "Hydrogen".to_string()),
-            BasicResourceType::Carbon =>  payload.insert("resource_type".to_string(), "Carbon".to_string()),
-            BasicResourceType::Silicon =>  payload.insert("resource_type".to_string(), "Silicon".to_string())
+            BasicResourceType::Oxygen => {
+                payload.insert("resource_type".to_string(), "Oxygen".to_string())
+            }
+            BasicResourceType::Hydrogen => {
+                payload.insert("resource_type".to_string(), "Hydrogen".to_string())
+            }
+            BasicResourceType::Carbon => {
+                payload.insert("resource_type".to_string(), "Carbon".to_string())
+            }
+            BasicResourceType::Silicon => {
+                payload.insert("resource_type".to_string(), "Silicon".to_string())
+            }
         };
-        payload.insert("status".to_string(), if success { "success" } else { "failed" }.to_string());
+        payload.insert(
+            "status".to_string(),
+            if success { "success" } else { "failed" }.to_string(),
+        );
 
         if let Some(amt) = amount {
             payload.insert("amount".to_string(), amt.to_string());
@@ -46,22 +61,43 @@ impl AI {
             Some(Participant::new(ActorType::Explorer, explorer_id)),
             Some(Participant::new(ActorType::Planet, planet_id)),
             EventType::InternalPlanetAction,
-            if success { Channel::Info } else { Channel::Warning },
+            if success {
+                Channel::Info
+            } else {
+                Channel::Warning
+            },
             payload,
-        ).emit();
+        )
+        .emit();
     }
 }
 
 impl PlanetAI for AI {
-
-    fn handle_sunray(&mut self, state: &mut PlanetState, _generator: &Generator, _combinator: &Combinator, sunray: Sunray) {
-        info!("Planet {} receive the Sunray from the Orchestrator",state.id());
+    fn handle_sunray(
+        &mut self,
+        state: &mut PlanetState,
+        _generator: &Generator,
+        _combinator: &Combinator,
+        sunray: Sunray,
+    ) {
+        info!(
+            "Planet {} receive the Sunray from the Orchestrator",
+            state.id()
+        );
         state.charge_cell(sunray);
         info!("Planet {}: Cell charged", state.id());
     }
 
-    fn handle_internal_state_req(&mut self, state: &mut PlanetState, _generator: &Generator, _combinator: &Combinator) -> DummyPlanetState {
-        info!("Planet {} receive the request of information from the Orchestrator",state.id());
+    fn handle_internal_state_req(
+        &mut self,
+        state: &mut PlanetState,
+        _generator: &Generator,
+        _combinator: &Combinator,
+    ) -> DummyPlanetState {
+        info!(
+            "Planet {} receive the request of information from the Orchestrator",
+            state.id()
+        );
         state.to_dummy()
     }
 
@@ -74,34 +110,43 @@ impl PlanetAI for AI {
         // 1. Search a cell charged
         match state.full_cell() {
             None => {
-                info!("Planet {}: NO charged cells, asteroid will destroy the planet!", state.id());
+                info!(
+                    "Planet {}: NO charged cells, asteroid will destroy the planet!",
+                    state.id()
+                );
                 None
             }
 
-            Some((_cell, idx)) => {
-                match state.build_rocket(idx) {
-                    Ok(_) => {
-                        info!("Planet {}: Rocket successfully built!", state.id());
-                        state.take_rocket()
-                    }
-                    Err(e) => {
-                        error!(
-                            "Planet {}: Failed to build rocket: {}",
-                            state.id(),
-                            e
-                        );
-                        None
-                    }
+            Some((_cell, idx)) => match state.build_rocket(idx) {
+                Ok(_) => {
+                    info!("Planet {}: Rocket successfully built!", state.id());
+                    state.take_rocket()
                 }
-            }
+                Err(e) => {
+                    error!("Planet {}: Failed to build rocket: {}", state.id(), e);
+                    None
+                }
+            },
         }
     }
 
-    fn on_explorer_arrival(&mut self, _state: &mut PlanetState, _generator: &Generator, _combinator: &Combinator, _explorer_id: ID) {
+    fn on_explorer_arrival(
+        &mut self,
+        _state: &mut PlanetState,
+        _generator: &Generator,
+        _combinator: &Combinator,
+        _explorer_id: ID,
+    ) {
         //todo!()
     }
 
-    fn on_explorer_departure(&mut self, _state: &mut PlanetState, _generator: &Generator, _combinator: &Combinator, _explorer_id: ID) {
+    fn on_explorer_departure(
+        &mut self,
+        _state: &mut PlanetState,
+        _generator: &Generator,
+        _combinator: &Combinator,
+        _explorer_id: ID,
+    ) {
         //todo!()
     }
 
@@ -130,40 +175,52 @@ impl PlanetAI for AI {
         state: &mut PlanetState,
         generator: &Generator,
         combinator: &Combinator,
-        msg: ExplorerToPlanet
+        msg: ExplorerToPlanet,
     ) -> Option<PlanetToExplorer> {
         match msg {
             // This variant is used to ask the Planet for the available [BasicResourceType]
             ExplorerToPlanet::SupportedResourceRequest { explorer_id } => {
                 // Log incoming request
                 let mut payload = Payload::new();
-                payload.insert("action".to_string(), "supported_resource_request".to_string());
+                payload.insert(
+                    "action".to_string(),
+                    "supported_resource_request".to_string(),
+                );
                 LogEvent::new(
                     Some(Participant::new(ActorType::Explorer, explorer_id)),
                     Some(Participant::new(ActorType::Planet, state.id())),
                     EventType::MessageExplorerToPlanet,
                     Channel::Debug,
                     payload,
-                ).emit();
+                )
+                .emit();
 
-                Some(PlanetToExplorer::SupportedResourceResponse { resource_list: generator.all_available_recipes() })
-            },
+                Some(PlanetToExplorer::SupportedResourceResponse {
+                    resource_list: generator.all_available_recipes(),
+                })
+            }
 
             // This variant is used to ask the Planet for the available [ComplexResourceType]
             ExplorerToPlanet::SupportedCombinationRequest { explorer_id } => {
                 // Log incoming request
                 let mut payload = Payload::new();
-                payload.insert("action".to_string(), "supported_combination_request".to_string());
+                payload.insert(
+                    "action".to_string(),
+                    "supported_combination_request".to_string(),
+                );
                 LogEvent::new(
                     Some(Participant::new(ActorType::Explorer, explorer_id)),
                     Some(Participant::new(ActorType::Planet, state.id())),
                     EventType::MessageExplorerToPlanet,
                     Channel::Debug,
                     payload,
-                ).emit();
+                )
+                .emit();
 
-                Some(PlanetToExplorer::SupportedCombinationResponse { combination_list: combinator.all_available_recipes() })
-            },
+                Some(PlanetToExplorer::SupportedCombinationResponse {
+                    combination_list: combinator.all_available_recipes(),
+                })
+            }
 
             // This variant is used to ask the Planet to generate a [BasicResource].
             // Three expected outcomes:
@@ -171,7 +228,10 @@ impl PlanetAI for AI {
             //  - Some(GenerateResourceResponse { resource: None }) => the planet could generate the resource, but generation failed
             //  - Some(GenerateResourceResponse { resource: Some(requested_resource) }) => the planet successfully generated the resource
             // Explorer is expected to handle said outcomes.
-            ExplorerToPlanet::GenerateResourceRequest { explorer_id , resource } => {
+            ExplorerToPlanet::GenerateResourceRequest {
+                explorer_id,
+                resource,
+            } => {
                 // Checking with planet state if charged cell is available
                 if let Some((charged_cell, _)) = state.full_cell() {
                     // Matching generation with requested type
@@ -180,68 +240,148 @@ impl PlanetAI for AI {
                             match generator.make_oxygen(charged_cell) {
                                 Ok(oxygen) => {
                                     // Log successful resource creation
-                                    AI::log_resource_generation(explorer_id, state.id(), resource, true, Some(1), None);
-                                    Some(PlanetToExplorer::GenerateResourceResponse { resource: Some(BasicResource::Oxygen(oxygen)) })
+                                    AI::log_resource_generation(
+                                        explorer_id,
+                                        state.id(),
+                                        resource,
+                                        true,
+                                        Some(1),
+                                        None,
+                                    );
+                                    Some(PlanetToExplorer::GenerateResourceResponse {
+                                        resource: Some(BasicResource::Oxygen(oxygen)),
+                                    })
                                 }
                                 Err(msg) => {
                                     // Log unsuccessful resource creation & show msg
-                                    AI::log_resource_generation(explorer_id, state.id(), resource, false, None, Some(msg.to_string()));
-                                    Some(PlanetToExplorer::GenerateResourceResponse { resource: None })
+                                    AI::log_resource_generation(
+                                        explorer_id,
+                                        state.id(),
+                                        resource,
+                                        false,
+                                        None,
+                                        Some(msg.to_string()),
+                                    );
+                                    Some(PlanetToExplorer::GenerateResourceResponse {
+                                        resource: None,
+                                    })
                                 }
                             }
-                        },
+                        }
                         BasicResourceType::Carbon => {
                             match generator.make_carbon(charged_cell) {
                                 Ok(carbon) => {
                                     // Log successful resource creation
-                                    AI::log_resource_generation(explorer_id, state.id(), resource, true, Some(1), None);
-                                    Some(PlanetToExplorer::GenerateResourceResponse { resource: Some(BasicResource::Carbon(carbon)) })
+                                    AI::log_resource_generation(
+                                        explorer_id,
+                                        state.id(),
+                                        resource,
+                                        true,
+                                        Some(1),
+                                        None,
+                                    );
+                                    Some(PlanetToExplorer::GenerateResourceResponse {
+                                        resource: Some(BasicResource::Carbon(carbon)),
+                                    })
                                 }
                                 Err(msg) => {
                                     // Log unsuccessful resource creation & show msg
-                                    AI::log_resource_generation(explorer_id, state.id(), resource, false, None, Some(msg.to_string()));
-                                    Some(PlanetToExplorer::GenerateResourceResponse { resource: None })
+                                    AI::log_resource_generation(
+                                        explorer_id,
+                                        state.id(),
+                                        resource,
+                                        false,
+                                        None,
+                                        Some(msg.to_string()),
+                                    );
+                                    Some(PlanetToExplorer::GenerateResourceResponse {
+                                        resource: None,
+                                    })
                                 }
                             }
-                        },
+                        }
                         BasicResourceType::Hydrogen => {
                             match generator.make_hydrogen(charged_cell) {
                                 Ok(hydrogen) => {
                                     // Log successful resource creation
-                                    AI::log_resource_generation(explorer_id, state.id(), resource, true, Some(1), None);
-                                    Some(PlanetToExplorer::GenerateResourceResponse { resource: Some(BasicResource::Hydrogen(hydrogen)) })
+                                    AI::log_resource_generation(
+                                        explorer_id,
+                                        state.id(),
+                                        resource,
+                                        true,
+                                        Some(1),
+                                        None,
+                                    );
+                                    Some(PlanetToExplorer::GenerateResourceResponse {
+                                        resource: Some(BasicResource::Hydrogen(hydrogen)),
+                                    })
                                 }
                                 Err(msg) => {
                                     // Log unsuccessful resource creation & show msg
-                                    AI::log_resource_generation(explorer_id, state.id(), resource, false, None, Some(msg.to_string()));
-                                    Some(PlanetToExplorer::GenerateResourceResponse { resource: None })
+                                    AI::log_resource_generation(
+                                        explorer_id,
+                                        state.id(),
+                                        resource,
+                                        false,
+                                        None,
+                                        Some(msg.to_string()),
+                                    );
+                                    Some(PlanetToExplorer::GenerateResourceResponse {
+                                        resource: None,
+                                    })
                                 }
                             }
-                        },
+                        }
                         BasicResourceType::Silicon => {
                             match generator.make_silicon(charged_cell) {
                                 Ok(silicon) => {
                                     // Log successful resource creation
-                                    AI::log_resource_generation(explorer_id, state.id(), resource, true, Some(1), None);
-                                    Some(PlanetToExplorer::GenerateResourceResponse { resource: Some(BasicResource::Silicon(silicon)) })
+                                    AI::log_resource_generation(
+                                        explorer_id,
+                                        state.id(),
+                                        resource,
+                                        true,
+                                        Some(1),
+                                        None,
+                                    );
+                                    Some(PlanetToExplorer::GenerateResourceResponse {
+                                        resource: Some(BasicResource::Silicon(silicon)),
+                                    })
                                 }
                                 Err(msg) => {
                                     // Log unsuccessful resource creation & show msg
-                                    AI::log_resource_generation(explorer_id, state.id(), resource, false, None, Some(msg.to_string()));
-                                    Some(PlanetToExplorer::GenerateResourceResponse { resource: None })
+                                    AI::log_resource_generation(
+                                        explorer_id,
+                                        state.id(),
+                                        resource,
+                                        false,
+                                        None,
+                                        Some(msg.to_string()),
+                                    );
+                                    Some(PlanetToExplorer::GenerateResourceResponse {
+                                        resource: None,
+                                    })
                                 }
                             }
-                        },
+                        }
                     }
                 } else {
                     // Log failed request as no charges available
                     let mut payload = Payload::new();
                     payload.insert("action".to_string(), "generate_resource".to_string());
                     match resource {
-                        BasicResourceType::Oxygen =>  payload.insert("resource_type".to_string(), "Oxygen".to_string()),
-                        BasicResourceType::Hydrogen =>  payload.insert("resource_type".to_string(), "Hydrogen".to_string()),
-                        BasicResourceType::Carbon =>  payload.insert("resource_type".to_string(), "Carbon".to_string()),
-                        BasicResourceType::Silicon =>  payload.insert("resource_type".to_string(), "Silicon".to_string())
+                        BasicResourceType::Oxygen => {
+                            payload.insert("resource_type".to_string(), "Oxygen".to_string())
+                        }
+                        BasicResourceType::Hydrogen => {
+                            payload.insert("resource_type".to_string(), "Hydrogen".to_string())
+                        }
+                        BasicResourceType::Carbon => {
+                            payload.insert("resource_type".to_string(), "Carbon".to_string())
+                        }
+                        BasicResourceType::Silicon => {
+                            payload.insert("resource_type".to_string(), "Silicon".to_string())
+                        }
                     };
                     payload.insert("status".to_string(), "rejected".to_string());
                     payload.insert("reason".to_string(), "no_charged_cells".to_string());
@@ -251,11 +391,12 @@ impl PlanetAI for AI {
                         EventType::InternalPlanetAction,
                         Channel::Warning,
                         payload,
-                    ).emit();
+                    )
+                    .emit();
 
                     None
                 }
-            },
+            }
 
             // This variant is used to ask the Planet to generate a [ComplexResource] using the [ComplexResourceRequest]
             // [ComplexResourceRequest] = [ComplexResource]([BasicResource], [BasicResource])
@@ -263,49 +404,69 @@ impl PlanetAI for AI {
             //  - Some(CombineResourceResponse { complex_response: Err((err_msg, r1, r2)) }) => the planet couldn't create the resource
             //  - Some(CombineResourceResponse { complex_response: Ok(requested_resource) }) => the planet successfully create the resource
             // Explorer is expected to handle said outcomes.
-            ExplorerToPlanet::CombineResourceRequest { explorer_id , msg } => {
+            ExplorerToPlanet::CombineResourceRequest { explorer_id, msg } => {
                 // Parsing [ComplexResourceRequest] into a [ComplexResourceType] and [GenericResource]s
                 let (r_type, r1, r2) = match msg {
                     ComplexResourceRequest::Robot(r1, r2) => {
                         (ComplexResourceType::Robot, r1.to_generic(), r2.to_generic())
-                    },
+                    }
                     ComplexResourceRequest::Water(r1, r2) => {
                         (ComplexResourceType::Water, r1.to_generic(), r2.to_generic())
-                    },
-                    ComplexResourceRequest::Diamond(r1, r2) => {
-                        (ComplexResourceType::Diamond, r1.to_generic(), r2.to_generic())
-                    },
+                    }
+                    ComplexResourceRequest::Diamond(r1, r2) => (
+                        ComplexResourceType::Diamond,
+                        r1.to_generic(),
+                        r2.to_generic(),
+                    ),
                     ComplexResourceRequest::Life(r1, r2) => {
                         (ComplexResourceType::Life, r1.to_generic(), r2.to_generic())
-                    },
-                    ComplexResourceRequest::Dolphin(r1, r2) => {
-                        (ComplexResourceType::Dolphin, r1.to_generic(), r2.to_generic())
-                    },
-                    ComplexResourceRequest::AIPartner(r1, r2) => {
-                        (ComplexResourceType::AIPartner, r1.to_generic(), r2.to_generic())
                     }
+                    ComplexResourceRequest::Dolphin(r1, r2) => (
+                        ComplexResourceType::Dolphin,
+                        r1.to_generic(),
+                        r2.to_generic(),
+                    ),
+                    ComplexResourceRequest::AIPartner(r1, r2) => (
+                        ComplexResourceType::AIPartner,
+                        r1.to_generic(),
+                        r2.to_generic(),
+                    ),
                 };
 
                 // Checking with planet state if charged cell is available
-                if let Some((charged_cell, _)) = state.full_cell(){
+                if let Some((charged_cell, _)) = state.full_cell() {
                     // Matching generation with requested type
                     match r_type {
                         ComplexResourceType::Robot => {
                             let silicon = match r1.to_silicon() {
                                 Ok(r) => r,
-                                Err(msg) => { panic!("Failed conversion from [GenericResource] to [Silicon] - Err: {}", msg) }
+                                Err(msg) => {
+                                    panic!(
+                                        "Failed conversion from [GenericResource] to [Silicon] - Err: {}",
+                                        msg
+                                    )
+                                }
                             };
                             let life = match r2.to_life() {
                                 Ok(r) => r,
-                                Err(msg) => { panic!("Failed conversion from [GenericResource] to [Life] - Err: {}", msg) }
+                                Err(msg) => {
+                                    panic!(
+                                        "Failed conversion from [GenericResource] to [Life] - Err: {}",
+                                        msg
+                                    )
+                                }
                             };
 
                             match combinator.make_robot(silicon, life, charged_cell) {
                                 Ok(robot) => {
                                     // Log successful resource creation
                                     let mut payload = Payload::new();
-                                    payload.insert("action".to_string(), "combine_resource".to_string());
-                                    payload.insert("resource_type".to_string(), "Robot".to_string());
+                                    payload.insert(
+                                        "action".to_string(),
+                                        "combine_resource".to_string(),
+                                    );
+                                    payload
+                                        .insert("resource_type".to_string(), "Robot".to_string());
                                     payload.insert("status".to_string(), "success".to_string());
                                     payload.insert("input_1".to_string(), "Silicon".to_string());
                                     payload.insert("input_2".to_string(), "Life".to_string());
@@ -315,17 +476,22 @@ impl PlanetAI for AI {
                                         EventType::InternalPlanetAction,
                                         Channel::Info,
                                         payload,
-                                    ).emit();
+                                    )
+                                    .emit();
 
                                     Some(PlanetToExplorer::CombineResourceResponse {
-                                        complex_response: Ok(ComplexResource::Robot(robot))
+                                        complex_response: Ok(ComplexResource::Robot(robot)),
                                     })
-                                },
+                                }
                                 Err((msg, r1, r2)) => {
                                     // Log failed resource creation
                                     let mut payload = Payload::new();
-                                    payload.insert("action".to_string(), "combine_resource".to_string());
-                                    payload.insert("resource_type".to_string(), "Robot".to_string());
+                                    payload.insert(
+                                        "action".to_string(),
+                                        "combine_resource".to_string(),
+                                    );
+                                    payload
+                                        .insert("resource_type".to_string(), "Robot".to_string());
                                     payload.insert("status".to_string(), "failed".to_string());
                                     payload.insert("error".to_string(), msg.clone());
                                     payload.insert("input_1".to_string(), "Silicon".to_string());
@@ -336,9 +502,16 @@ impl PlanetAI for AI {
                                         EventType::InternalPlanetAction,
                                         Channel::Warning,
                                         payload,
-                                    ).emit();
+                                    )
+                                    .emit();
 
-                                    Some(PlanetToExplorer::CombineResourceResponse { complex_response: Err((msg, r1.to_generic(), r2.to_generic())) })
+                                    Some(PlanetToExplorer::CombineResourceResponse {
+                                        complex_response: Err((
+                                            msg,
+                                            r1.to_generic(),
+                                            r2.to_generic(),
+                                        )),
+                                    })
                                 }
                             }
                         }
@@ -357,7 +530,8 @@ impl PlanetAI for AI {
                             payload.insert("action".to_string(), "combine_resource".to_string());
                             payload.insert("resource_type".to_string(), format!("{:?}", r_type));
                             payload.insert("status".to_string(), "rejected".to_string());
-                            payload.insert("reason".to_string(), "recipe_not_available".to_string());
+                            payload
+                                .insert("reason".to_string(), "recipe_not_available".to_string());
                             payload.insert("error".to_string(), msg.clone());
                             LogEvent::new(
                                 Some(Participant::new(ActorType::Explorer, explorer_id)),
@@ -365,9 +539,12 @@ impl PlanetAI for AI {
                                 EventType::InternalPlanetAction,
                                 Channel::Warning,
                                 payload,
-                            ).emit();
+                            )
+                            .emit();
 
-                            Some(PlanetToExplorer::CombineResourceResponse { complex_response: Err((msg, r1, r2)) })
+                            Some(PlanetToExplorer::CombineResourceResponse {
+                                complex_response: Err((msg, r1, r2)),
+                            })
                         }
                     }
                 } else {
@@ -393,27 +570,39 @@ impl PlanetAI for AI {
                         EventType::InternalPlanetAction,
                         Channel::Warning,
                         payload,
-                    ).emit();
+                    )
+                    .emit();
 
-                    Some(PlanetToExplorer::CombineResourceResponse { complex_response: Err((msg, r1, r2)) })
+                    Some(PlanetToExplorer::CombineResourceResponse {
+                        complex_response: Err((msg, r1, r2)),
+                    })
                 }
-            },
+            }
 
             // This variant is used to ask the Planet for the available energy_cells number
             ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id } => {
                 // Log incoming energy cell availability request
                 let mut payload = Payload::new();
-                payload.insert("action".to_string(), "available_energy_cell_request".to_string());
-                payload.insert("available_cells".to_string(), state.cells_count().to_string());
+                payload.insert(
+                    "action".to_string(),
+                    "available_energy_cell_request".to_string(),
+                );
+                payload.insert(
+                    "available_cells".to_string(),
+                    state.cells_count().to_string(),
+                );
                 LogEvent::new(
                     Some(Participant::new(ActorType::Explorer, explorer_id)),
                     Some(Participant::new(ActorType::Planet, state.id())),
                     EventType::MessageExplorerToPlanet,
                     Channel::Debug,
                     payload,
-                ).emit();
+                )
+                .emit();
 
-                Some(PlanetToExplorer::AvailableEnergyCellResponse { available_cells: state.cells_count() as u32 })
+                Some(PlanetToExplorer::AvailableEnergyCellResponse {
+                    available_cells: state.cells_count() as u32,
+                })
             }
         }
     }
@@ -424,7 +613,7 @@ impl PlanetAI for AI {
 pub fn create_planet(
     rx_orchestrator: Receiver<OrchestratorToPlanet>,
     tx_orchestrator: Sender<PlanetToOrchestrator>,
-    rx_explorer: Receiver<ExplorerToPlanet>
+    rx_explorer: Receiver<ExplorerToPlanet>,
 ) -> Planet {
     let id = 1;
     let ai = AI {
@@ -435,11 +624,9 @@ pub fn create_planet(
         BasicResourceType::Oxygen,
         BasicResourceType::Carbon,
         BasicResourceType::Hydrogen,
-        BasicResourceType::Silicon
+        BasicResourceType::Silicon,
     ];
-    let comb_rules = vec![
-        ComplexResourceType::Robot,
-    ];
+    let comb_rules = vec![ComplexResourceType::Robot];
 
     // Construct the planet and return it
     match Planet::new(
@@ -469,7 +656,7 @@ pub fn create_planet_with_id(
     rx_orchestrator: Receiver<OrchestratorToPlanet>,
     tx_orchestrator: Sender<PlanetToOrchestrator>,
     rx_explorer: Receiver<ExplorerToPlanet>,
-    id: ID
+    id: ID,
 ) -> Planet {
     let ai = AI {
         started: false,
@@ -479,11 +666,9 @@ pub fn create_planet_with_id(
         BasicResourceType::Oxygen,
         BasicResourceType::Carbon,
         BasicResourceType::Hydrogen,
-        BasicResourceType::Silicon
+        BasicResourceType::Silicon,
     ];
-    let comb_rules = vec![
-        ComplexResourceType::Robot,
-    ];
+    let comb_rules = vec![ComplexResourceType::Robot];
 
     // Construct the planet and return it
     match Planet::new(
@@ -507,7 +692,6 @@ pub fn create_planet_with_id(
         }
     }
 }
-
 
 // =============================================================================
 // COMPREHENSIVE UNIT TESTS FOR PLANET AI (lib.rs)
@@ -537,8 +721,8 @@ mod tests {
         BasicResource, BasicResourceType, ComplexResourceType,
     };
     use common_game::components::sunray::Sunray;
-    use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
     use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
+    use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
 
     // =========================================================================
     // LOGGING INITIALIZATION
@@ -657,9 +841,9 @@ mod tests {
         let (expl_tx, expl_rx) = unbounded::<PlanetToExplorer>();
         tx.send(OrchestratorToPlanet::IncomingExplorerRequest {
             explorer_id,
-            new_sender: expl_tx
+            new_sender: expl_tx,
         })
-            .unwrap();
+        .unwrap();
 
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(PlanetToOrchestrator::IncomingExplorerResponse { res, .. }) => {
@@ -717,7 +901,10 @@ mod tests {
         assert!(!ai.started);
         assert!(!ai.stopped);
 
-        info!("AI initial state verified: started={}, stopped={}", ai.started, ai.stopped);
+        info!(
+            "AI initial state verified: started={}, stopped={}",
+            ai.started, ai.stopped
+        );
     }
 
     // =========================================================================
@@ -735,32 +922,78 @@ mod tests {
         assert_eq!(planet.id(), 1, "Planet ID should be 1");
 
         // Type check
-        assert!(matches!(planet.planet_type(), PlanetType::B), "Planet should be Type B");
+        assert!(
+            matches!(planet.planet_type(), PlanetType::B),
+            "Planet should be Type B"
+        );
 
         // Energy cells check (Type B has 1 cell)
-        assert_eq!(planet.state().cells_count(), 1, "Type B should have 1 energy cell");
+        assert_eq!(
+            planet.state().cells_count(),
+            1,
+            "Type B should have 1 energy cell"
+        );
 
         // Rocket capability check (Type B cannot have rockets)
-        assert!(!planet.state().can_have_rocket(), "Type B cannot have rockets");
-        assert!(!planet.state().has_rocket(), "Planet should start without rocket");
+        assert!(
+            !planet.state().can_have_rocket(),
+            "Type B cannot have rockets"
+        );
+        assert!(
+            !planet.state().has_rocket(),
+            "Planet should start without rocket"
+        );
 
         // Generator recipes check
         let generator = planet.generator();
-        assert!(generator.contains(BasicResourceType::Oxygen), "Should have Oxygen recipe");
-        assert!(generator.contains(BasicResourceType::Hydrogen), "Should have Hydrogen recipe");
-        assert!(generator.contains(BasicResourceType::Carbon), "Should have Carbon recipe");
-        assert!(generator.contains(BasicResourceType::Silicon), "Should have Silicon recipe");
+        assert!(
+            generator.contains(BasicResourceType::Oxygen),
+            "Should have Oxygen recipe"
+        );
+        assert!(
+            generator.contains(BasicResourceType::Hydrogen),
+            "Should have Hydrogen recipe"
+        );
+        assert!(
+            generator.contains(BasicResourceType::Carbon),
+            "Should have Carbon recipe"
+        );
+        assert!(
+            generator.contains(BasicResourceType::Silicon),
+            "Should have Silicon recipe"
+        );
 
         // Combinator recipes check
         let comb = planet.combinator();
-        assert!(comb.contains(ComplexResourceType::Robot), "Should have Robot recipe");
-        assert!(!comb.contains(ComplexResourceType::Water), "Should NOT have Water recipe");
-        assert!(!comb.contains(ComplexResourceType::Diamond), "Should NOT have Diamond recipe");
-        assert!(!comb.contains(ComplexResourceType::Life), "Should NOT have Life recipe");
-        assert!(!comb.contains(ComplexResourceType::Dolphin), "Should NOT have Dolphin recipe");
-        assert!(!comb.contains(ComplexResourceType::AIPartner), "Should NOT have AIPartner recipe");
+        assert!(
+            comb.contains(ComplexResourceType::Robot),
+            "Should have Robot recipe"
+        );
+        assert!(
+            !comb.contains(ComplexResourceType::Water),
+            "Should NOT have Water recipe"
+        );
+        assert!(
+            !comb.contains(ComplexResourceType::Diamond),
+            "Should NOT have Diamond recipe"
+        );
+        assert!(
+            !comb.contains(ComplexResourceType::Life),
+            "Should NOT have Life recipe"
+        );
+        assert!(
+            !comb.contains(ComplexResourceType::Dolphin),
+            "Should NOT have Dolphin recipe"
+        );
+        assert!(
+            !comb.contains(ComplexResourceType::AIPartner),
+            "Should NOT have AIPartner recipe"
+        );
 
-        info!("Planet properties verified: id={}, type=B, cells=1, recipes=4 basic + 1 complex", planet.id());
+        info!(
+            "Planet properties verified: id={}, type=B, cells=1, recipes=4 basic + 1 complex",
+            planet.id()
+        );
     }
 
     // =========================================================================
@@ -901,7 +1134,10 @@ mod tests {
         tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(PlanetToOrchestrator::InternalStateResponse { planet_state, .. }) => {
-                assert_eq!(planet_state.charged_cells_count, 1, "Cell should be charged");
+                assert_eq!(
+                    planet_state.charged_cells_count, 1,
+                    "Cell should be charged"
+                );
                 info!("Cell charged: {}/1", planet_state.charged_cells_count);
             }
             Ok(_) => panic!("Expected InternalStateResponse"),
@@ -911,7 +1147,8 @@ mod tests {
         // Multiple sunrays (Type B only has 1 cell, extras should be ignored/returned)
         info!("Sending additional sunrays...");
         for i in 0..3 {
-            tx.send(OrchestratorToPlanet::Sunray(Sunray::default())).unwrap();
+            tx.send(OrchestratorToPlanet::Sunray(Sunray::default()))
+                .unwrap();
             match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(PlanetToOrchestrator::SunrayAck { .. }) => {
                     info!("Sunray {} acknowledged", i + 2);
@@ -938,7 +1175,8 @@ mod tests {
 
         // Test without charged cell
         info!("Sending asteroid without charged cell...");
-        tx.send(OrchestratorToPlanet::Asteroid(Asteroid::default())).unwrap();
+        tx.send(OrchestratorToPlanet::Asteroid(Asteroid::default()))
+            .unwrap();
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(PlanetToOrchestrator::AsteroidAck { planet_id, rocket }) => {
                 assert_eq!(planet_id, 1);
@@ -953,7 +1191,8 @@ mod tests {
         info!("Charging cell and sending asteroid...");
         send_sunray(&tx, &rx);
 
-        tx.send(OrchestratorToPlanet::Asteroid(Asteroid::default())).unwrap();
+        tx.send(OrchestratorToPlanet::Asteroid(Asteroid::default()))
+            .unwrap();
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(PlanetToOrchestrator::AsteroidAck { planet_id, rocket }) => {
                 assert_eq!(planet_id, 1);
@@ -990,7 +1229,7 @@ mod tests {
             planet_channels,
             rx_explorer,
         )
-            .expect("Failed to create Type A planet");
+        .expect("Failed to create Type A planet");
 
         let handle = thread::spawn(move || {
             let _ = planet.run();
@@ -1004,7 +1243,8 @@ mod tests {
 
         // Send asteroid - Type A should survive
         info!("Sending asteroid to Type A planet...");
-        tx.send(OrchestratorToPlanet::Asteroid(Asteroid::default())).unwrap();
+        tx.send(OrchestratorToPlanet::Asteroid(Asteroid::default()))
+            .unwrap();
 
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(PlanetToOrchestrator::AsteroidAck { planet_id, rocket }) => {
@@ -1161,11 +1401,17 @@ mod tests {
                         (BasicResource::Silicon(_), BasicResourceType::Silicon) => true,
                         _ => false,
                     };
-                    assert!(matches, "Generated resource type should match requested type");
+                    assert!(
+                        matches,
+                        "Generated resource type should match requested type"
+                    );
                     info!("{} generated successfully", name);
                 }
                 Ok(_) => panic!("Expected GenerateResourceResponse for {}", name),
-                Err(e) => panic!("Expected GenerateResourceResponse for {}, got error: {}", name, e),
+                Err(e) => panic!(
+                    "Expected GenerateResourceResponse for {}, got error: {}",
+                    name, e
+                ),
             }
         }
 
@@ -1233,7 +1479,10 @@ mod tests {
 
         // Explorer 200 should NOT receive anything
         let result = expl_rx_200.recv_timeout(Duration::from_millis(100));
-        assert!(result.is_err(), "Explorer 200 should not receive Explorer 100's response");
+        assert!(
+            result.is_err(),
+            "Explorer 200 should not receive Explorer 100's response"
+        );
         info!("Explorer 200 correctly received nothing");
 
         // Unregister explorer 100 and verify isolation
@@ -1246,7 +1495,10 @@ mod tests {
             .unwrap();
 
         let result = expl_rx_100.recv_timeout(Duration::from_millis(200));
-        assert!(result.is_err(), "Unregistered explorer should get no response");
+        assert!(
+            result.is_err(),
+            "Unregistered explorer should get no response"
+        );
         info!("Unregistered explorer correctly received nothing");
 
         kill_planet(&tx, &rx);
@@ -1296,7 +1548,8 @@ mod tests {
 
         // Test Sunray when stopped
         info!("Sending Sunray to stopped planet...");
-        tx.send(OrchestratorToPlanet::Sunray(Sunray::default())).unwrap();
+        tx.send(OrchestratorToPlanet::Sunray(Sunray::default()))
+            .unwrap();
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(PlanetToOrchestrator::Stopped { planet_id }) => {
                 assert_eq!(planet_id, 1);
@@ -1308,7 +1561,8 @@ mod tests {
 
         // Test Asteroid when stopped
         info!("Sending Asteroid to stopped planet...");
-        tx.send(OrchestratorToPlanet::Asteroid(Asteroid::default())).unwrap();
+        tx.send(OrchestratorToPlanet::Asteroid(Asteroid::default()))
+            .unwrap();
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(PlanetToOrchestrator::Stopped { planet_id }) => {
                 assert_eq!(planet_id, 1);
@@ -1416,8 +1670,14 @@ mod tests {
         tx.send(OrchestratorToPlanet::InternalStateRequest).unwrap();
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(PlanetToOrchestrator::InternalStateResponse { planet_state, .. }) => {
-                assert_eq!(planet_state.charged_cells_count, 0, "Cell should be discharged");
-                info!("Internal state: {} charged cells", planet_state.charged_cells_count);
+                assert_eq!(
+                    planet_state.charged_cells_count, 0,
+                    "Cell should be discharged"
+                );
+                info!(
+                    "Internal state: {} charged cells",
+                    planet_state.charged_cells_count
+                );
             }
             Ok(_) => panic!("Expected InternalStateResponse"),
             Err(e) => panic!("Expected state, got error: {}", e),

@@ -35,10 +35,7 @@ impl GalaxyLayout {
     /// Returns the neighbours of `planet_id` (only alive planets are filtered
     /// later by the orchestrator — the layout itself is static and complete).
     pub fn neighbors_of(&self, planet_id: ID) -> Vec<ID> {
-        self.adjacency
-            .get(&planet_id)
-            .cloned()
-            .unwrap_or_default()
+        self.adjacency.get(&planet_id).cloned().unwrap_or_default()
     }
 }
 

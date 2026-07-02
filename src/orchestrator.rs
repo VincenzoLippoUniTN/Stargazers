@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crossbeam_channel::{never, select_biased, tick, unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, never, select_biased, tick, unbounded};
 use log::{debug, error, info, warn};
 
 // =========================================================================
@@ -13,7 +13,9 @@ use log::{debug, error, info, warn};
 // =========================================================================
 use common_game::components::forge::Forge;
 use common_game::components::planet::Planet;
-use common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
+use common_game::protocols::orchestrator_explorer::{
+    ExplorerToOrchestrator, OrchestratorToExplorer,
+};
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
 use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
 use common_game::utils::ID;
@@ -21,21 +23,21 @@ use common_game::utils::ID;
 // =========================================================================
 // INTERNAL MODULES
 // =========================================================================
-use crate::explorers::{roaming_explorer, BagSnapshot, Eleanor, Explorer, ExplorerBehaviour};
-use crate::galaxy_layout::{build_galaxy, GalaxyLayout};
-use crate::visualizer::{kind_of, VizBridge};
+use crate::explorers::{BagSnapshot, Eleanor, Explorer, ExplorerBehaviour, roaming_explorer};
+use crate::galaxy_layout::{GalaxyLayout, build_galaxy};
+use crate::visualizer::{VizBridge, kind_of};
 use galaxy_visualizer_stargazers::{GalaxyCommand, GalaxyReport, ReportSender};
 
 // =========================================================================
 // PLANET CREATION ALIASES (group-specific constructors, kept as-is)
 // =========================================================================
-use the_compiler_strikes_back::planet::create_planet as new_csb;
-use huston::{houston_we_have_a_borrow as new_hus, RocketStrategy};
-use one_million_crabs::planet::create_planet as new_omc;
 use ara_kees::planet::create_planet as new_bas;
-use trip::trip as new_trp;
+use huston::{RocketStrategy, houston_we_have_a_borrow as new_hus};
 use immutable_cosmic_borrow::create_planet as new_icb;
+use one_million_crabs::planet::create_planet as new_omc;
 use rusty_crab_ap2025::planet::create_planet as new_ryc;
+use the_compiler_strikes_back::planet::create_planet as new_csb;
+use trip::trip as new_trp;
 
 // =========================================================================
 // TUNABLES
@@ -113,7 +115,7 @@ struct Orchestrator {
     galaxy: GalaxyLayout,
     //to remember the travel in waiting for the planet response
     pending_travels: HashMap<ID, ID>,
-    transit_at:      HashMap<ID, ID>,
+    transit_at: HashMap<ID, ID>,
 
     paused: bool,
 }
@@ -145,7 +147,12 @@ fn spawn_planet(
         }
     });
 
-    PlanetLink { name, to_planet, to_planet_from_explorer, alive: true }
+    PlanetLink {
+        name,
+        to_planet,
+        to_planet_from_explorer,
+        alive: true,
+    }
 }
 
 /// Spawns an explorer thread. `tx_from_explorer` is a CLONE of the single shared
@@ -174,7 +181,14 @@ fn spawn_explorer(
     );
     thread::spawn(move || explorer.run());
 
-    ExplorerLink { name, start_planet, current_planet: start_planet, to_explorer, to_explorer_from_planet, alive: true }
+    ExplorerLink {
+        name,
+        start_planet,
+        current_planet: start_planet,
+        to_explorer,
+        to_explorer_from_planet,
+        alive: true,
+    }
 }
 
 impl Orchestrator {
@@ -190,20 +204,37 @@ impl Orchestrator {
         let (tx_from_explorer, from_explorers) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
 
         // --- Planets (group-specific constructors; adjust args to your tree) ---
-        let csb = spawn_planet("CSB", tx_from_planet.clone(), |rx, tx, rx_exp|
-            new_csb(rx, tx, rx_exp, 1));
+        let csb = spawn_planet("CSB", tx_from_planet.clone(), |rx, tx, rx_exp| {
+            new_csb(rx, tx, rx_exp, 1)
+        });
         let hus = spawn_planet("HUS", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_hus(rx, tx, rx_exp, 2, RocketStrategy::Safe, None).expect("Failed to create HUS") });
+            new_hus(rx, tx, rx_exp, 2, RocketStrategy::Safe, None).expect("Failed to create HUS")
+        });
         let omc = spawn_planet("OMC", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_omc(rx, tx, rx_exp, 3).expect("Failed to create OMC") });
+            new_omc(rx, tx, rx_exp, 3).expect("Failed to create OMC")
+        });
         let bas = spawn_planet("BAS", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_bas(rx, tx, rx_exp, 4).expect("Failed to create BAS") });
+            new_bas(rx, tx, rx_exp, 4).expect("Failed to create BAS")
+        });
         let trp = spawn_planet("TRP", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_trp(5, rx, tx, rx_exp).expect("Failed to create TRP") });
+            new_trp(5, rx, tx, rx_exp).expect("Failed to create TRP")
+        });
         let icb = spawn_planet("ICB", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_icb(false, 1.0, 1.0, Duration::from_secs(60), Duration::from_secs(10), 6, (rx, tx), rx_exp).expect("Failed to create ICB") });
-        let ryc = spawn_planet("RYC", tx_from_planet, |rx, tx, rx_exp|
-            new_ryc(rx, tx, rx_exp, 7));
+            new_icb(
+                false,
+                1.0,
+                1.0,
+                Duration::from_secs(60),
+                Duration::from_secs(10),
+                6,
+                (rx, tx),
+                rx_exp,
+            )
+            .expect("Failed to create ICB")
+        });
+        let ryc = spawn_planet("RYC", tx_from_planet, |rx, tx, rx_exp| {
+            new_ryc(rx, tx, rx_exp, 7)
+        });
 
         let mut planets = HashMap::new();
         planets.insert(1, csb);
@@ -216,13 +247,17 @@ impl Orchestrator {
 
         // --- Explorers, wired to their start planets' explorer->planet senders ---
         let anon = spawn_explorer(
-            "Anon", 101, 1,
+            "Anon",
+            101,
+            1,
             tx_from_explorer.clone(),
             planets[&1].to_planet_from_explorer.clone(),
             roaming_explorer,
         );
         let eleanor = spawn_explorer(
-            "Eleanor", 102, 4,
+            "Eleanor",
+            102,
+            4,
             tx_from_explorer, // last clone moves in
             planets[&4].to_planet_from_explorer.clone(),
             |ai| {
@@ -234,7 +269,6 @@ impl Orchestrator {
         let mut explorers = HashMap::new();
         explorers.insert(101, anon);
         explorers.insert(102, eleanor);
-
 
         use common_game::components::planet::PlanetType;
         viz.register_planet(1, kind_of(PlanetType::C));
@@ -260,7 +294,10 @@ impl Orchestrator {
             info!("[build] planet id={id} name={}", p.name);
         }
         for (&id, e) in &explorers {
-            info!("[build] explorer id={id} name={} start_planet={}", e.name, e.start_planet);
+            info!(
+                "[build] explorer id={id} name={} start_planet={}",
+                e.name, e.start_planet
+            );
         }
 
         Ok(Orchestrator {
@@ -345,7 +382,12 @@ impl Orchestrator {
             .collect();
         for (explorer_id, start_planet, new_sender) in registrations {
             if let Some(p) = self.planets.get(&start_planet) {
-                let _ = p.to_planet.send(OrchestratorToPlanet::IncomingExplorerRequest { explorer_id, new_sender });
+                let _ = p
+                    .to_planet
+                    .send(OrchestratorToPlanet::IncomingExplorerRequest {
+                        explorer_id,
+                        new_sender,
+                    });
             }
         }
         // Seed the visualizer: galaxy edges + explorer starting positions.
@@ -383,7 +425,10 @@ impl Orchestrator {
                 let asteroid = self.forge.generate_asteroid();
                 self.send_to_planet(planet_id, OrchestratorToPlanet::Asteroid(asteroid));
             }
-            GalaxyCommand::SetAi { planet_id: _, running } => {
+            GalaxyCommand::SetAi {
+                planet_id: _,
+                running,
+            } => {
                 self.paused = !running;
                 for p in self.planets.values() {
                     if p.alive {
@@ -407,7 +452,10 @@ impl Orchestrator {
                 }
             }
             GalaxyCommand::Kill { planet_id } => self.begin_planet_destruction(planet_id),
-            GalaxyCommand::MoveExplorer { explorer_id, to_planet } => {
+            GalaxyCommand::MoveExplorer {
+                explorer_id,
+                to_planet,
+            } => {
                 if let Some(current) = self.explorer_current_planet_guess(explorer_id) {
                     self.handle_travel_request(explorer_id, current, to_planet);
                 } else {
@@ -421,16 +469,35 @@ impl Orchestrator {
                     text: format!("Explorer {explorer_id}: reset requested"),
                 });
             }
-            GalaxyCommand::SupportedResources { explorer_id } =>
-                self.send_to_explorer(explorer_id, OrchestratorToExplorer::SupportedResourceRequest),
-            GalaxyCommand::SupportedCombinations { explorer_id } =>
-                self.send_to_explorer(explorer_id, OrchestratorToExplorer::SupportedCombinationRequest),
-            GalaxyCommand::Generate { explorer_id, resource } =>
-                self.send_to_explorer(explorer_id, OrchestratorToExplorer::GenerateResourceRequest { to_generate: resource }),
-            GalaxyCommand::Combine { explorer_id, resource } =>
-                self.send_to_explorer(explorer_id, OrchestratorToExplorer::CombineResourceRequest { to_generate: resource }),
-            GalaxyCommand::BagContent { explorer_id } =>
-                self.send_to_explorer(explorer_id, OrchestratorToExplorer::BagContentRequest),
+            GalaxyCommand::SupportedResources { explorer_id } => self.send_to_explorer(
+                explorer_id,
+                OrchestratorToExplorer::SupportedResourceRequest,
+            ),
+            GalaxyCommand::SupportedCombinations { explorer_id } => self.send_to_explorer(
+                explorer_id,
+                OrchestratorToExplorer::SupportedCombinationRequest,
+            ),
+            GalaxyCommand::Generate {
+                explorer_id,
+                resource,
+            } => self.send_to_explorer(
+                explorer_id,
+                OrchestratorToExplorer::GenerateResourceRequest {
+                    to_generate: resource,
+                },
+            ),
+            GalaxyCommand::Combine {
+                explorer_id,
+                resource,
+            } => self.send_to_explorer(
+                explorer_id,
+                OrchestratorToExplorer::CombineResourceRequest {
+                    to_generate: resource,
+                },
+            ),
+            GalaxyCommand::BagContent { explorer_id } => {
+                self.send_to_explorer(explorer_id, OrchestratorToExplorer::BagContentRequest)
+            }
         }
     }
 
@@ -452,7 +519,12 @@ impl Orchestrator {
             P_ASTEROID_MAX * (1.0 - (-K_RAMP * dt).exp())
         };
 
-        let alive_ids: Vec<ID> = self.planets.iter().filter(|(_, p)| p.alive).map(|(&id, _)| id).collect();
+        let alive_ids: Vec<ID> = self
+            .planets
+            .iter()
+            .filter(|(_, p)| p.alive)
+            .map(|(&id, _)| id)
+            .collect();
         for id in alive_ids {
             let r = self.roll();
             if r < P_SKIP {
@@ -474,7 +546,9 @@ impl Orchestrator {
         }
         for e in self.explorers.values() {
             if e.alive {
-                let _ = e.to_explorer.send(OrchestratorToExplorer::CurrentPlanetRequest);
+                let _ = e
+                    .to_explorer
+                    .send(OrchestratorToExplorer::CurrentPlanetRequest);
             }
         }
 
@@ -504,32 +578,47 @@ impl Orchestrator {
                     self.begin_planet_destruction(planet_id);
                 }
             }
-            PlanetToOrchestrator::KillPlanetResult { planet_id } => self.finalize_planet_death(planet_id),
+            PlanetToOrchestrator::KillPlanetResult { planet_id } => {
+                self.finalize_planet_death(planet_id)
+            }
             PlanetToOrchestrator::StartPlanetAIResult { .. } => info!("[orch] {name} AI started"),
-            PlanetToOrchestrator::StopPlanetAIResult { .. } | PlanetToOrchestrator::Stopped { .. } => {
+            PlanetToOrchestrator::StopPlanetAIResult { .. }
+            | PlanetToOrchestrator::Stopped { .. } => {
                 debug!("[orch] {name} stopped / ack-while-stopped")
             }
-            PlanetToOrchestrator::InternalStateResponse { planet_id, planet_state } => {
+            PlanetToOrchestrator::InternalStateResponse {
+                planet_id,
+                planet_state,
+            } => {
                 self.viz.update_planet(planet_id, &planet_state);
             }
-            PlanetToOrchestrator::IncomingExplorerResponse { explorer_id, res, .. } => {
+            PlanetToOrchestrator::IncomingExplorerResponse {
+                explorer_id, res, ..
+            } => {
                 //planet response, travel in waiting
                 self.pending_travels.remove(&explorer_id);
 
                 //check if the planet is alive
                 if self.dead_planets.contains(&id) {
-                    warn!("[orch] {name} accepted explorer {explorer_id} but the planet just died! Denying travel.");
+                    warn!(
+                        "[orch] {name} accepted explorer {explorer_id} but the planet just died! Denying travel."
+                    );
                     //the explorer with None return understand that the travel fail
                     self.grant_travel(explorer_id, None, id);
                     return;
                 }
 
                 //autorization here because if we send the explorer before to the planet is ok can be an error
-                let dst_sender = self.planets.get(&id).map(|p| p.to_planet_from_explorer.clone());
+                let dst_sender = self
+                    .planets
+                    .get(&id)
+                    .map(|p| p.to_planet_from_explorer.clone());
                 self.grant_travel(explorer_id, dst_sender, id);
                 debug!("[orch] {name} incoming explorer {explorer_id}: {res:?}")
             }
-            PlanetToOrchestrator::OutgoingExplorerResponse { explorer_id, res, .. } => {
+            PlanetToOrchestrator::OutgoingExplorerResponse {
+                explorer_id, res, ..
+            } => {
                 debug!("[orch] {name} outgoing explorer {explorer_id}: {res:?}")
             }
         }
@@ -547,7 +636,11 @@ impl Orchestrator {
     /// Planet confirmed dead: mark it, tell the view, and probe explorers
     /// so any colocated ones get killed (we never track location; we ask).
     fn finalize_planet_death(&mut self, planet_id: ID) {
-        let still_alive = self.planets.get(&planet_id).map(|p| p.alive).unwrap_or(false);
+        let still_alive = self
+            .planets
+            .get(&planet_id)
+            .map(|p| p.alive)
+            .unwrap_or(false);
         if !still_alive {
             return; // idempotent
         }
@@ -560,7 +653,8 @@ impl Orchestrator {
 
         //new CHECK --> find and unblock the explorers in waiting for this planet
         //when the planet died we find the explorer that need to go there and we block him
-        let stranded_explorers: Vec<ID> = self.pending_travels
+        let stranded_explorers: Vec<ID> = self
+            .pending_travels
             .iter()
             .filter(|&(_, &dst_id)| dst_id == planet_id)
             .map(|(&exp_id, _)| exp_id)
@@ -569,14 +663,18 @@ impl Orchestrator {
         for exp_id in stranded_explorers {
             self.pending_travels.remove(&exp_id);
             self.transit_at.remove(&exp_id); // also abandon any in-progress walk to it
-            warn!("[orch] Unblocking explorer {exp_id} whose destination planet {planet_id} just died!");
+            warn!(
+                "[orch] Unblocking explorer {exp_id} whose destination planet {planet_id} just died!"
+            );
             self.grant_travel(exp_id, None, planet_id);
         }
 
         // Ask every living explorer where it is; the response handler kills any on a dead planet.
         for e in self.explorers.values() {
             if e.alive {
-                let _ = e.to_explorer.send(OrchestratorToExplorer::CurrentPlanetRequest);
+                let _ = e
+                    .to_explorer
+                    .send(OrchestratorToExplorer::CurrentPlanetRequest);
             }
         }
     }
@@ -590,7 +688,10 @@ impl Orchestrator {
         let name = self.explorers.get(&id).map(|e| e.name).unwrap_or("?");
 
         match msg {
-            ExplorerToOrchestrator::CurrentPlanetResult { explorer_id, planet_id } => {
+            ExplorerToOrchestrator::CurrentPlanetResult {
+                explorer_id,
+                planet_id,
+            } => {
                 // Keep our best-known location fresh so manual MoveExplorer routes
                 // from where the explorer actually is, not its start planet.
                 if let Some(e) = self.explorers.get_mut(&explorer_id) {
@@ -598,7 +699,13 @@ impl Orchestrator {
                 }
                 // While walking, advance_journeys owns the marker; don't overwrite it.
                 let walking = self.transit_at.contains_key(&explorer_id);
-                if !walking && self.explorers.get(&explorer_id).map(|e| e.alive).unwrap_or(false) {
+                if !walking
+                    && self
+                        .explorers
+                        .get(&explorer_id)
+                        .map(|e| e.alive)
+                        .unwrap_or(false)
+                {
                     self.viz.set_explorer(explorer_id, planet_id);
                 }
                 if self.dead_planets.contains(&planet_id) {
@@ -609,39 +716,81 @@ impl Orchestrator {
             ExplorerToOrchestrator::KillExplorerResult { explorer_id } => {
                 self.finalize_explorer_death(explorer_id);
             }
-            ExplorerToOrchestrator::NeighborsRequest { explorer_id, current_planet_id } => {
+            ExplorerToOrchestrator::NeighborsRequest {
+                explorer_id,
+                current_planet_id,
+            } => {
                 let neighbors = self.neighbors_of(current_planet_id);
-                self.send_to_explorer(explorer_id, OrchestratorToExplorer::NeighborsResponse { neighbors });
+                self.send_to_explorer(
+                    explorer_id,
+                    OrchestratorToExplorer::NeighborsResponse { neighbors },
+                );
             }
-            ExplorerToOrchestrator::TravelToPlanetRequest { explorer_id, current_planet_id, dst_planet_id } => {
+            ExplorerToOrchestrator::TravelToPlanetRequest {
+                explorer_id,
+                current_planet_id,
+                dst_planet_id,
+            } => {
                 self.handle_travel_request(explorer_id, current_planet_id, dst_planet_id);
             }
-            ExplorerToOrchestrator::StartExplorerAIResult { .. } => info!("[orch] explorer {name} AI started"),
+            ExplorerToOrchestrator::StartExplorerAIResult { .. } => {
+                info!("[orch] explorer {name} AI started")
+            }
             ExplorerToOrchestrator::StopExplorerAIResult { .. }
             | ExplorerToOrchestrator::ResetExplorerAIResult { .. }
-            | ExplorerToOrchestrator::MovedToPlanetResult { .. } => debug!("[orch] explorer {name} lifecycle/move ack"),
+            | ExplorerToOrchestrator::MovedToPlanetResult { .. } => {
+                debug!("[orch] explorer {name} lifecycle/move ack")
+            }
             // GUI-facing results: forward each to the visualizer's report channel
             // so the user can actually see the answer to what they asked.
-            ExplorerToOrchestrator::SupportedResourceResult { explorer_id, supported_resources } => {
-                let mut resources: Vec<String> =
-                    supported_resources.iter().map(|r| format!("{r:?}")).collect();
+            ExplorerToOrchestrator::SupportedResourceResult {
+                explorer_id,
+                supported_resources,
+            } => {
+                let mut resources: Vec<String> = supported_resources
+                    .iter()
+                    .map(|r| format!("{r:?}"))
+                    .collect();
                 resources.sort();
-                self.reports.send(GalaxyReport::SupportedResources { explorer_id, resources });
+                self.reports.send(GalaxyReport::SupportedResources {
+                    explorer_id,
+                    resources,
+                });
             }
-            ExplorerToOrchestrator::SupportedCombinationResult { explorer_id, combination_list } => {
+            ExplorerToOrchestrator::SupportedCombinationResult {
+                explorer_id,
+                combination_list,
+            } => {
                 let mut combinations: Vec<String> =
                     combination_list.iter().map(|c| format!("{c:?}")).collect();
                 combinations.sort();
-                self.reports
-                    .send(GalaxyReport::SupportedCombinations { explorer_id, combinations });
+                self.reports.send(GalaxyReport::SupportedCombinations {
+                    explorer_id,
+                    combinations,
+                });
             }
-            ExplorerToOrchestrator::GenerateResourceResponse { explorer_id, generated } => {
-                self.reports.send(GalaxyReport::Generated { explorer_id, outcome: generated });
+            ExplorerToOrchestrator::GenerateResourceResponse {
+                explorer_id,
+                generated,
+            } => {
+                self.reports.send(GalaxyReport::Generated {
+                    explorer_id,
+                    outcome: generated,
+                });
             }
-            ExplorerToOrchestrator::CombineResourceResponse { explorer_id, generated } => {
-                self.reports.send(GalaxyReport::Combined { explorer_id, outcome: generated });
+            ExplorerToOrchestrator::CombineResourceResponse {
+                explorer_id,
+                generated,
+            } => {
+                self.reports.send(GalaxyReport::Combined {
+                    explorer_id,
+                    outcome: generated,
+                });
             }
-            ExplorerToOrchestrator::BagContentResponse { explorer_id, bag_content } => {
+            ExplorerToOrchestrator::BagContentResponse {
+                explorer_id,
+                bag_content,
+            } => {
                 let mut basic: Vec<(String, usize)> = bag_content
                     .basic_resources
                     .iter()
@@ -654,7 +803,11 @@ impl Orchestrator {
                     .map(|(k, v)| (format!("{k:?}"), *v))
                     .collect();
                 complex.sort();
-                self.reports.send(GalaxyReport::Bag { explorer_id, basic, complex });
+                self.reports.send(GalaxyReport::Bag {
+                    explorer_id,
+                    basic,
+                    complex,
+                });
             }
         }
 
@@ -689,7 +842,11 @@ impl Orchestrator {
     // TRAVEL (shared by autonomous TravelToPlanetRequest and manual MoveExplorer)
     // =====================================================================
     fn handle_travel_request(&mut self, explorer_id: ID, current_planet_id: ID, dst_planet_id: ID) {
-        let dst_alive = self.planets.get(&dst_planet_id).map(|p| p.alive).unwrap_or(false);
+        let dst_alive = self
+            .planets
+            .get(&dst_planet_id)
+            .map(|p| p.alive)
+            .unwrap_or(false);
         if !dst_alive {
             self.grant_travel(explorer_id, None, dst_planet_id); // deny
             return;
@@ -703,7 +860,10 @@ impl Orchestrator {
         }
 
         // dst is alive but earlier deaths may have severed the graph.
-        if self.path_next_hop(current_planet_id, dst_planet_id).is_none() {
+        if self
+            .path_next_hop(current_planet_id, dst_planet_id)
+            .is_none()
+        {
             self.grant_travel(explorer_id, None, dst_planet_id); // strand: unreachable
             return;
         }
@@ -711,28 +871,40 @@ impl Orchestrator {
         // Leave the source now; the per-tick walker handles hops + the destination
         // registration on arrival. No grant yet — the explorer stays blocked.
         if let Some(cur) = self.planets.get(&current_planet_id) {
-            let _ = cur.to_planet.send(OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id });
+            let _ = cur
+                .to_planet
+                .send(OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id });
         }
         self.pending_travels.insert(explorer_id, dst_planet_id); // final dst (death-stranding)
-        self.transit_at.insert(explorer_id, current_planet_id);  // marker position
+        self.transit_at.insert(explorer_id, current_planet_id); // marker position
     }
 
     /// Register the explorer's reply-sender on the destination; the planet's
     /// `IncomingExplorerResponse` then issues the actual grant (existing path,
     /// line 496) and clears `pending_travels`.
     fn finalize_arrival(&mut self, explorer_id: ID, dst_planet_id: ID) {
-        if let (Some(dst), Some(e)) = (self.planets.get(&dst_planet_id), self.explorers.get(&explorer_id)) {
-            let _ = dst.to_planet.send(OrchestratorToPlanet::IncomingExplorerRequest {
-                explorer_id,
-                new_sender: e.to_explorer_from_planet.clone(),
-            });
+        if let (Some(dst), Some(e)) = (
+            self.planets.get(&dst_planet_id),
+            self.explorers.get(&explorer_id),
+        ) {
+            let _ = dst
+                .to_planet
+                .send(OrchestratorToPlanet::IncomingExplorerRequest {
+                    explorer_id,
+                    new_sender: e.to_explorer_from_planet.clone(),
+                });
         } else {
             self.pending_travels.remove(&explorer_id);
             self.grant_travel(explorer_id, None, dst_planet_id); // defensive: don't hang
         }
     }
 
-    fn grant_travel(&mut self, explorer_id: ID, sender_to_new_planet: Option<Sender<ExplorerToPlanet>>, planet_id: ID) {
+    fn grant_travel(
+        &mut self,
+        explorer_id: ID,
+        sender_to_new_planet: Option<Sender<ExplorerToPlanet>>,
+        planet_id: ID,
+    ) {
         // A `Some` sender means the move succeeded, so `planet_id` is now the
         // explorer's location; a `None` sender is a denial/strand and leaves the
         // known location unchanged.
@@ -743,25 +915,36 @@ impl Orchestrator {
         }
         self.send_to_explorer(
             explorer_id,
-            OrchestratorToExplorer::MoveToPlanet { sender_to_new_planet, planet_id },
+            OrchestratorToExplorer::MoveToPlanet {
+                sender_to_new_planet,
+                planet_id,
+            },
         );
     }
 
     /// Next hop from `from` toward `to` on a shortest alive path, or None if
     /// already there or unreachable. `neighbors_of` already excludes dead planets.
     fn path_next_hop(&self, from: ID, to: ID) -> Option<ID> {
-        if from == to { return None; }
+        if from == to {
+            return None;
+        }
         let mut visited = HashSet::from([from]);
         let mut queue: VecDeque<(ID, ID)> = VecDeque::new(); // (node, first_hop_on_its_path)
         for n in self.neighbors_of(from) {
-            if n == to { return Some(n); }
+            if n == to {
+                return Some(n);
+            }
             visited.insert(n);
             queue.push_back((n, n));
         }
         while let Some((node, first)) = queue.pop_front() {
             for n in self.neighbors_of(node) {
-                if n == to { return Some(first); }
-                if visited.insert(n) { queue.push_back((n, first)); }
+                if n == to {
+                    return Some(first);
+                }
+                if visited.insert(n) {
+                    queue.push_back((n, first));
+                }
             }
         }
         None
@@ -771,15 +954,26 @@ impl Orchestrator {
         let travelers: Vec<ID> = self.transit_at.keys().copied().collect();
         for exp_id in travelers {
             // Explorer died (e.g. its source planet blew up) -> abandon the journey.
-            if !self.explorers.get(&exp_id).map(|e| e.alive).unwrap_or(false) {
+            if !self
+                .explorers
+                .get(&exp_id)
+                .map(|e| e.alive)
+                .unwrap_or(false)
+            {
                 self.transit_at.remove(&exp_id);
                 self.pending_travels.remove(&exp_id);
                 continue;
             }
-            let at = match self.transit_at.get(&exp_id) { Some(&a) => a, None => continue };
+            let at = match self.transit_at.get(&exp_id) {
+                Some(&a) => a,
+                None => continue,
+            };
             let dst = match self.pending_travels.get(&exp_id) {
                 Some(&d) => d,
-                None => { self.transit_at.remove(&exp_id); continue; } // dst death cleared it
+                None => {
+                    self.transit_at.remove(&exp_id);
+                    continue;
+                } // dst death cleared it
             };
 
             match self.path_next_hop(at, dst) {
@@ -893,7 +1087,8 @@ mod tests {
         // 1. SETUP DEI CANALI MOCK
         // =================================================================
         let (tx_from_planets, rx_from_planets) = unbounded::<PlanetToOrchestrator>();
-        let (tx_from_explorers, rx_from_explorers) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
+        let (tx_from_explorers, rx_from_explorers) =
+            unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
 
         let (tx_to_planet_1, rx_to_planet_1) = unbounded::<OrchestratorToPlanet>();
         let (tx_from_planet_to_exp_1, _rx_from_planet_to_exp_1) = unbounded::<ExplorerToPlanet>();
@@ -934,16 +1129,44 @@ mod tests {
             paused: false,
         };
 
-        orch.planets.insert(1, PlanetLink { name: "Alpha-1", to_planet: tx_to_planet_1, to_planet_from_explorer: tx_from_planet_to_exp_1, alive: true });
-        orch.planets.insert(2, PlanetLink { name: "Alpha-2", to_planet: tx_to_planet_2, to_planet_from_explorer: tx_from_planet_to_exp_2, alive: true });
+        orch.planets.insert(
+            1,
+            PlanetLink {
+                name: "Alpha-1",
+                to_planet: tx_to_planet_1,
+                to_planet_from_explorer: tx_from_planet_to_exp_1,
+                alive: true,
+            },
+        );
+        orch.planets.insert(
+            2,
+            PlanetLink {
+                name: "Alpha-2",
+                to_planet: tx_to_planet_2,
+                to_planet_from_explorer: tx_from_planet_to_exp_2,
+                alive: true,
+            },
+        );
 
-        orch.explorers.insert(99, ExplorerLink { name: "Star-Tracker", start_planet: 1, current_planet: 1, to_explorer: tx_to_explorer, to_explorer_from_planet: tx_from_exp_to_planet, alive: true });
+        orch.explorers.insert(
+            99,
+            ExplorerLink {
+                name: "Star-Tracker",
+                start_planet: 1,
+                current_planet: 1,
+                to_explorer: tx_to_explorer,
+                to_explorer_from_planet: tx_from_exp_to_planet,
+                alive: true,
+            },
+        );
 
-        tx_from_explorers.send(ExplorerToOrchestrator::TravelToPlanetRequest {
-            explorer_id: 99,
-            current_planet_id: 1,
-            dst_planet_id: 2,
-        }).unwrap();
+        tx_from_explorers
+            .send(ExplorerToOrchestrator::TravelToPlanetRequest {
+                explorer_id: 99,
+                current_planet_id: 1,
+                dst_planet_id: 2,
+            })
+            .unwrap();
 
         let msg = orch.from_explorers.recv().unwrap();
         orch.handle_explorer_msg(msg); // L'Orchestrator elabora la richiesta
@@ -957,22 +1180,28 @@ mod tests {
         // multi-hop path the manual "Move explorer" button also relies on.)
         orch.advance_journeys();
 
-        if let Ok(OrchestratorToPlanet::IncomingExplorerRequest { explorer_id, .. }) = rx_to_planet_2.try_recv() {
+        if let Ok(OrchestratorToPlanet::IncomingExplorerRequest { explorer_id, .. }) =
+            rx_to_planet_2.try_recv()
+        {
             assert_eq!(explorer_id, 99);
         } else {
             panic!("ERRORE: Il pianeta di destinazione non ha ricevuto IncomingExplorerRequest");
         }
 
-        tx_from_planets.send(PlanetToOrchestrator::IncomingExplorerResponse {
-            planet_id: 2,
-            explorer_id: 99,
-            res: Ok(()),
-        }).unwrap();
+        tx_from_planets
+            .send(PlanetToOrchestrator::IncomingExplorerResponse {
+                planet_id: 2,
+                explorer_id: 99,
+                res: Ok(()),
+            })
+            .unwrap();
 
         let msg = orch.from_planets.recv().unwrap();
         orch.handle_planet_msg(msg);
 
-        if let Ok(OrchestratorToExplorer::MoveToPlanet { planet_id, .. }) = rx_to_explorer.try_recv() {
+        if let Ok(OrchestratorToExplorer::MoveToPlanet { planet_id, .. }) =
+            rx_to_explorer.try_recv()
+        {
             assert_eq!(planet_id, 2); // Si è spostato con successo sul pianeta 2!
         } else {
             panic!("ERRORE: L'esploratore non ha ricevuto MoveToPlanet");
@@ -980,10 +1209,12 @@ mod tests {
 
         let tx_from_explorer_clone = tx_from_explorers.clone();
 
-        tx_from_explorer_clone.send(ExplorerToOrchestrator::NeighborsRequest {
-            explorer_id: 99,
-            current_planet_id: 2,
-        }).unwrap();
+        tx_from_explorer_clone
+            .send(ExplorerToOrchestrator::NeighborsRequest {
+                explorer_id: 99,
+                current_planet_id: 2,
+            })
+            .unwrap();
 
         let orch_thread = thread::spawn(move || {
             orch.run(); // Questo invierà i messaggi di Bootstrap prima di leggere le code!
@@ -996,9 +1227,9 @@ mod tests {
             }
         }
 
-        tx_from_explorer_clone.send(ExplorerToOrchestrator::KillExplorerResult {
-            explorer_id: 99
-        }).unwrap();
+        tx_from_explorer_clone
+            .send(ExplorerToOrchestrator::KillExplorerResult { explorer_id: 99 })
+            .unwrap();
 
         loop {
             let msg = rx_to_planet_1.recv().unwrap();
@@ -1014,6 +1245,8 @@ mod tests {
             }
         }
 
-        orch_thread.join().expect("ERRORE: Il thread dell'Orchestrator è andato in panico o si è bloccato");
+        orch_thread
+            .join()
+            .expect("ERRORE: Il thread dell'Orchestrator è andato in panico o si è bloccato");
     }
 }

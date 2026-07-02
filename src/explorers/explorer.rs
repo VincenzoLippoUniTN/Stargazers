@@ -1,17 +1,23 @@
+use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashSet;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
-use crossbeam_channel::{Receiver, Sender};
 
 // Protocols
-use common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
+use common_game::protocols::orchestrator_explorer::{
+    ExplorerToOrchestrator, OrchestratorToExplorer,
+};
 use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
 
 // Resource Types
-use common_game::components::resource::{BasicResource, BasicResourceType, ComplexResource, ComplexResourceRequest, ComplexResourceType};
 use common_game::components::resource::BasicResourceType::{Carbon, Hydrogen, Oxygen, Silicon};
-use common_game::components::resource::ComplexResourceType::{Water, Diamond, Life, Robot, Dolphin, AIPartner};
+use common_game::components::resource::ComplexResourceType::{
+    AIPartner, Diamond, Dolphin, Life, Robot, Water,
+};
+use common_game::components::resource::{
+    BasicResource, BasicResourceType, ComplexResource, ComplexResourceRequest, ComplexResourceType,
+};
 use common_game::utils::ID;
 
 // Structured logging (logging.rs). Adjust this path if the module isn't `common_game::logging`.
@@ -91,10 +97,14 @@ impl Explorer {
     // =========================================================================
     /// E ->> P: SupportedResourceRequest(explorer_id)
     /// P ->> E: SupportedResourceResponse(resource_list)
-    fn ask_planet_for_resources( &mut self ) -> Result<(), String> {
+    fn ask_planet_for_resources(&mut self) -> Result<(), String> {
         // 1. E --> Planet
-        let request = ExplorerToPlanet::SupportedResourceRequest { explorer_id: self.explorer_id };
-        let _ = self.tx_to_planet.send(request)
+        let request = ExplorerToPlanet::SupportedResourceRequest {
+            explorer_id: self.explorer_id,
+        };
+        let _ = self
+            .tx_to_planet
+            .send(request)
             .map_err(|_| "Orchestrator disconnected.".to_string())?;
 
         // 2. waiting
@@ -123,7 +133,10 @@ impl Explorer {
             Err(_) => {
                 self.log_from_planet(
                     Channel::Warning,
-                    kv([("detail", "timeout waiting for supported resources".to_string())]),
+                    kv([(
+                        "detail",
+                        "timeout waiting for supported resources".to_string(),
+                    )]),
                 );
                 Err("Timeout from Planet AI.".to_string())
             }
@@ -135,10 +148,14 @@ impl Explorer {
     // =========================================================================
     /// E ->> P: SupportedCombinationRequest(explorer_id)
     /// P ->> E: SupportedCombinationResponse(combination_list)
-    fn ask_planet_for_combinations( &mut self ) -> Result<(), String> {
+    fn ask_planet_for_combinations(&mut self) -> Result<(), String> {
         // 1. E --> P combination
-        let request = ExplorerToPlanet::SupportedCombinationRequest { explorer_id: self.explorer_id };
-        let _ = self.tx_to_planet.send(request)
+        let request = ExplorerToPlanet::SupportedCombinationRequest {
+            explorer_id: self.explorer_id,
+        };
+        let _ = self
+            .tx_to_planet
+            .send(request)
             .map_err(|_| "Orchestrator disconnected.".to_string())?;
 
         match self.rx_from_planet.recv_timeout(Duration::from_millis(500)) {
@@ -148,7 +165,10 @@ impl Explorer {
                     Channel::Debug,
                     kv([
                         ("detail", "supported combinations received".to_string()),
-                        ("combinations", format!("{:?}", self.current_combination_cookbook)),
+                        (
+                            "combinations",
+                            format!("{:?}", self.current_combination_cookbook),
+                        ),
                     ]),
                 );
                 Ok(())
@@ -166,7 +186,10 @@ impl Explorer {
             Err(_) => {
                 self.log_from_planet(
                     Channel::Warning,
-                    kv([("detail", "timeout waiting for supported combinations".to_string())]),
+                    kv([(
+                        "detail",
+                        "timeout waiting for supported combinations".to_string(),
+                    )]),
                 );
                 Err("Timeout from Planet AI.".to_string())
             }
@@ -176,20 +199,20 @@ impl Explorer {
     // =========================================================================
     // SEQUENCE DIAGRAM 3: E ->> P (GenerateResource)
     // =========================================================================
-    fn generate_resource_from_planet(
-        &mut self,
-        resource: BasicResourceType,
-    ) -> Result<(), String> {
+    fn generate_resource_from_planet(&mut self, resource: BasicResourceType) -> Result<(), String> {
         let req = ExplorerToPlanet::GenerateResourceRequest {
             explorer_id: self.explorer_id,
-            resource
+            resource,
         };
 
         if let Err(e) = self.tx_to_planet.send(req) {
             self.log_to_planet(
                 Channel::Error,
                 kv([
-                    ("detail", "failed to send GenerateResource request".to_string()),
+                    (
+                        "detail",
+                        "failed to send GenerateResource request".to_string(),
+                    ),
                     ("error", e.to_string()),
                 ]),
             );
@@ -235,7 +258,10 @@ impl Explorer {
             Err(_) => {
                 self.log_from_planet(
                     Channel::Warning,
-                    kv([("detail", "timeout waiting for generate response".to_string())]),
+                    kv([(
+                        "detail",
+                        "timeout waiting for generate response".to_string(),
+                    )]),
                 );
                 Err("Timeout from Planet AI.".to_string())
             }
@@ -255,76 +281,109 @@ impl Explorer {
         &mut self,
         resource_type: ComplexResourceType,
     ) -> Result<(), String> {
-        let msg : ComplexResourceRequest = match resource_type {
+        let msg: ComplexResourceRequest = match resource_type {
             Diamond => {
                 let carbon_1 = match self.bag.take_basic(Carbon) {
                     Some(resource) => resource.to_carbon()?,
-                    None => { return Err("Insufficient carbon for diamond generation.".to_string()); }
+                    None => {
+                        return Err("Insufficient carbon for diamond generation.".to_string());
+                    }
                 };
                 let carbon_2 = match self.bag.take_basic(Carbon) {
                     Some(resource) => resource.to_carbon()?,
-                    None => { self.bag.add_basic(BasicResource::Carbon(carbon_1)); return Err("Insufficient carbon for diamond generation.".to_string()); }
+                    None => {
+                        self.bag.add_basic(BasicResource::Carbon(carbon_1));
+                        return Err("Insufficient carbon for diamond generation.".to_string());
+                    }
                 };
                 ComplexResourceRequest::Diamond(carbon_1, carbon_2)
             }
             Water => {
                 let hydrogen = match self.bag.take_basic(Hydrogen) {
                     Some(resource) => resource.to_hydrogen()?,
-                    None => { return Err("Insufficient hydrogen for water generation.".to_string()); }
+                    None => {
+                        return Err("Insufficient hydrogen for water generation.".to_string());
+                    }
                 };
                 let oxygen = match self.bag.take_basic(Oxygen) {
                     Some(resource) => resource.to_oxygen()?,
-                    None => { self.bag.add_basic(BasicResource::Hydrogen(hydrogen)); return Err("Insufficient oxygen for water generation.".to_string()); }
+                    None => {
+                        self.bag.add_basic(BasicResource::Hydrogen(hydrogen));
+                        return Err("Insufficient oxygen for water generation.".to_string());
+                    }
                 };
                 ComplexResourceRequest::Water(hydrogen, oxygen)
             }
             Life => {
                 let water = match self.bag.take_complex(Water) {
                     Some(resource) => resource.to_water()?,
-                    None => { return Err("Insufficient water for life generation.".to_string()); }
+                    None => {
+                        return Err("Insufficient water for life generation.".to_string());
+                    }
                 };
                 let carbon = match self.bag.take_basic(Carbon) {
                     Some(resource) => resource.to_carbon()?,
-                    None => { self.bag.add_complex(ComplexResource::Water(water)); return Err("Insufficient carbon for life generation.".to_string()); }
+                    None => {
+                        self.bag.add_complex(ComplexResource::Water(water));
+                        return Err("Insufficient carbon for life generation.".to_string());
+                    }
                 };
                 ComplexResourceRequest::Life(water, carbon)
             }
             Robot => {
                 let silicon = match self.bag.take_basic(Silicon) {
                     Some(resource) => resource.to_silicon()?,
-                    None => { return Err("Insufficient silicon for robot generation.".to_string()); }
+                    None => {
+                        return Err("Insufficient silicon for robot generation.".to_string());
+                    }
                 };
                 let life = match self.bag.take_complex(Life) {
                     Some(resource) => resource.to_life()?,
-                    None => { self.bag.add_basic(BasicResource::Silicon(silicon)); return Err("Insufficient life for robot generation.".to_string()); }
+                    None => {
+                        self.bag.add_basic(BasicResource::Silicon(silicon));
+                        return Err("Insufficient life for robot generation.".to_string());
+                    }
                 };
                 ComplexResourceRequest::Robot(silicon, life)
             }
             Dolphin => {
                 let water = match self.bag.take_complex(Water) {
                     Some(resource) => resource.to_water()?,
-                    None => { return Err("Insufficient water for dolphin generation.".to_string()); }
+                    None => {
+                        return Err("Insufficient water for dolphin generation.".to_string());
+                    }
                 };
                 let life = match self.bag.take_complex(Life) {
                     Some(resource) => resource.to_life()?,
-                    None => { self.bag.add_complex(ComplexResource::Water(water)); return Err("Insufficient life for dolphin generation.".to_string()); }
+                    None => {
+                        self.bag.add_complex(ComplexResource::Water(water));
+                        return Err("Insufficient life for dolphin generation.".to_string());
+                    }
                 };
                 ComplexResourceRequest::Dolphin(water, life)
             }
             AIPartner => {
                 let robot = match self.bag.take_complex(Robot) {
                     Some(resource) => resource.to_robot()?,
-                    None => { return Err("Insufficient robot for AI-partner generation.".to_string()); }
+                    None => {
+                        return Err("Insufficient robot for AI-partner generation.".to_string());
+                    }
                 };
                 let diamond = match self.bag.take_complex(Diamond) {
                     Some(resource) => resource.to_diamond()?,
-                    None => { self.bag.add_complex(ComplexResource::Robot(robot)); return Err("Insufficient diamond for AI-partner generation.".to_string()); }
+                    None => {
+                        self.bag.add_complex(ComplexResource::Robot(robot));
+                        return Err("Insufficient diamond for AI-partner generation.".to_string());
+                    }
                 };
                 ComplexResourceRequest::AIPartner(robot, diamond)
             }
         };
 
-        let request = ExplorerToPlanet::CombineResourceRequest { explorer_id: self.explorer_id, msg };
+        let request = ExplorerToPlanet::CombineResourceRequest {
+            explorer_id: self.explorer_id,
+            msg,
+        };
         let _ = self.tx_to_planet.send(request);
 
         match self.rx_from_planet.recv_timeout(Duration::from_secs(1)) {
@@ -333,7 +392,7 @@ impl Explorer {
                     Ok(complex) => {
                         self.bag.add_complex(complex);
                         Ok(())
-                    },
+                    }
                     Err((err_msg, gen1, gen2)) => {
                         self.bag.add_generic(gen1);
                         self.bag.add_generic(gen2);
@@ -366,11 +425,11 @@ impl Explorer {
     // =========================================================================
     /// E ->> P: AvailableEnergyCellRequest(explorer_id)
     /// P ->> E: AvailableEnergyCellResponse(available_cells)
-    fn ask_planet_for_available_energy_cells(
-        &self,
-    ) -> usize {
+    fn ask_planet_for_available_energy_cells(&self) -> usize {
         // 1. E --> Planet
-        let req = ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id: self.explorer_id };
+        let req = ExplorerToPlanet::AvailableEnergyCellRequest {
+            explorer_id: self.explorer_id,
+        };
         if let Err(e) = self.tx_to_planet.send(req) {
             self.log_to_planet(
                 Channel::Error,
@@ -418,7 +477,10 @@ impl Explorer {
     fn reset_routine(&mut self) {
         self.log_internal(
             Channel::Debug,
-            kv([("detail", "reset requested; wiping bag and telemetry".to_string())]),
+            kv([(
+                "detail",
+                "reset requested; wiping bag and telemetry".to_string(),
+            )]),
         );
 
         self.bag = Bag::new();
@@ -440,7 +502,8 @@ impl Explorer {
             explorer_id: self.explorer_id,
             current_planet_id: self.current_planet_id,
         };
-        self.tx_to_orchestrator.send(request)
+        self.tx_to_orchestrator
+            .send(request)
             .map_err(|_| "Orchestrator disconnected.".to_string())?;
         self.awaiting_neighbors = true;
         Ok(())
@@ -460,7 +523,8 @@ impl Explorer {
             current_planet_id: self.current_planet_id,
             dst_planet_id: planet_id,
         };
-        self.tx_to_orchestrator.send(request)
+        self.tx_to_orchestrator
+            .send(request)
             .map_err(|_| "Orchestrator disconnected.".to_string())?;
         self.awaiting_move = true;
         Ok(())
@@ -471,7 +535,7 @@ impl Explorer {
         let (lock, cvar) = &**slot;
         let mut guard = lock.lock().unwrap();
         guard.ask_orchestrator_for_neighbors()?;
-        let _guard  = cvar.wait_while(guard, |e| e.awaiting_neighbors).unwrap();
+        let _guard = cvar.wait_while(guard, |e| e.awaiting_neighbors).unwrap();
         Ok(())
     }
 
@@ -501,7 +565,10 @@ impl Explorer {
             OrchestratorToExplorer::SupportedResourceRequest => {
                 self.log_from_orchestrator(
                     Channel::Debug,
-                    kv([("detail", "supported-resource request; querying planet".to_string())]),
+                    kv([(
+                        "detail",
+                        "supported-resource request; querying planet".to_string(),
+                    )]),
                 );
 
                 // Call sequence diagram 1
@@ -514,7 +581,9 @@ impl Explorer {
                     explorer_id: self.explorer_id,
                     supported_resources: self.current_generation_rules.clone(),
                 };
-                let _ = self.tx_to_orchestrator.send(response)
+                let _ = self
+                    .tx_to_orchestrator
+                    .send(response)
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
                 Ok(None)
             }
@@ -523,7 +592,10 @@ impl Explorer {
             OrchestratorToExplorer::SupportedCombinationRequest => {
                 self.log_from_orchestrator(
                     Channel::Debug,
-                    kv([("detail", "supported-combination request; querying planet".to_string())]),
+                    kv([(
+                        "detail",
+                        "supported-combination request; querying planet".to_string(),
+                    )]),
                 );
 
                 // Call directly Diagram 2
@@ -536,7 +608,9 @@ impl Explorer {
                     explorer_id: self.explorer_id,
                     combination_list: self.current_combination_cookbook.clone(),
                 };
-                let _ = self.tx_to_orchestrator.send(orchestrator_res)
+                let _ = self
+                    .tx_to_orchestrator
+                    .send(orchestrator_res)
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
                 Ok(None)
             }
@@ -545,7 +619,10 @@ impl Explorer {
             OrchestratorToExplorer::GenerateResourceRequest { to_generate } => {
                 self.log_from_orchestrator(
                     Channel::Debug,
-                    kv([("detail", "generate-resource request; querying planet".to_string())]),
+                    kv([(
+                        "detail",
+                        "generate-resource request; querying planet".to_string(),
+                    )]),
                 );
 
                 let generation_result = self.generate_resource_from_planet(to_generate);
@@ -555,7 +632,9 @@ impl Explorer {
                     generated: generation_result,
                 };
 
-                let _ = self.tx_to_orchestrator.send(response)
+                let _ = self
+                    .tx_to_orchestrator
+                    .send(response)
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
                 Ok(None)
             }
@@ -564,7 +643,10 @@ impl Explorer {
             OrchestratorToExplorer::CombineResourceRequest { to_generate } => {
                 self.log_from_orchestrator(
                     Channel::Debug,
-                    kv([("detail", "combine-resource request; querying planet".to_string())]),
+                    kv([(
+                        "detail",
+                        "combine-resource request; querying planet".to_string(),
+                    )]),
                 );
 
                 let combine_result = self.ask_planet_to_combine_resource(to_generate);
@@ -574,53 +656,84 @@ impl Explorer {
                     generated: combine_result,
                 };
 
-                let _ = self.tx_to_orchestrator.send(response)
+                let _ = self
+                    .tx_to_orchestrator
+                    .send(response)
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
                 Ok(None)
             }
 
             OrchestratorToExplorer::BagContentRequest => {
                 self.tx_to_orchestrator
-                    .send(ExplorerToOrchestrator::BagContentResponse { explorer_id: self.explorer_id, bag_content: self.bag.snapshot() })
+                    .send(ExplorerToOrchestrator::BagContentResponse {
+                        explorer_id: self.explorer_id,
+                        bag_content: self.bag.snapshot(),
+                    })
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
                 Ok(None)
             }
 
             OrchestratorToExplorer::ResetExplorerAI => {
                 self.reset_routine();
-                self.tx_to_orchestrator.send(ExplorerToOrchestrator::ResetExplorerAIResult { explorer_id: self.explorer_id })
+                self.tx_to_orchestrator
+                    .send(ExplorerToOrchestrator::ResetExplorerAIResult {
+                        explorer_id: self.explorer_id,
+                    })
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
                 Ok(None)
             }
 
             OrchestratorToExplorer::KillExplorer => {
                 self.on_kill();
-                self.tx_to_orchestrator.send(ExplorerToOrchestrator::KillExplorerResult { explorer_id: self.explorer_id })
+                self.tx_to_orchestrator
+                    .send(ExplorerToOrchestrator::KillExplorerResult {
+                        explorer_id: self.explorer_id,
+                    })
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
                 Ok(Some(true))
             }
 
             OrchestratorToExplorer::StopExplorerAI => {
                 self.on_stop();
-                self.tx_to_orchestrator.send(ExplorerToOrchestrator::StopExplorerAIResult { explorer_id: self.explorer_id })
+                self.tx_to_orchestrator
+                    .send(ExplorerToOrchestrator::StopExplorerAIResult {
+                        explorer_id: self.explorer_id,
+                    })
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
 
-                if self.wait_for_start()? { return Ok(Some(true)); }
+                if self.wait_for_start()? {
+                    return Ok(Some(true));
+                }
                 self.on_start();
 
                 Ok(None)
             }
 
             OrchestratorToExplorer::CurrentPlanetRequest => {
-                self.tx_to_orchestrator.send(ExplorerToOrchestrator::CurrentPlanetResult { explorer_id: self.explorer_id, planet_id: self.current_planet_id })
+                self.tx_to_orchestrator
+                    .send(ExplorerToOrchestrator::CurrentPlanetResult {
+                        explorer_id: self.explorer_id,
+                        planet_id: self.current_planet_id,
+                    })
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
                 Ok(None)
             }
 
-            OrchestratorToExplorer::MoveToPlanet { sender_to_new_planet, planet_id, } => {
+            OrchestratorToExplorer::MoveToPlanet {
+                sender_to_new_planet,
+                planet_id,
+            } => {
                 match sender_to_new_planet {
-                    Some(channel) => { self.tx_to_planet = channel; }
-                    None => { self.awaiting_move = false; return Err("Failed to intercept Sender<ExplorerToPlanet> during space travel.".to_string()); }
+                    Some(channel) => {
+                        self.tx_to_planet = channel;
+                    }
+                    None => {
+                        self.awaiting_move = false;
+                        return Err(
+                            "Failed to intercept Sender<ExplorerToPlanet> during space travel."
+                                .to_string(),
+                        );
+                    }
                 }
                 self.current_planet_id = planet_id;
                 self.current_generation_rules = HashSet::new();
@@ -628,7 +741,11 @@ impl Explorer {
                 self.current_neighbors = Vec::new();
                 self.awaiting_move = false;
 
-                self.tx_to_orchestrator.send(ExplorerToOrchestrator::MovedToPlanetResult { explorer_id: self.explorer_id, planet_id: self.current_planet_id })
+                self.tx_to_orchestrator
+                    .send(ExplorerToOrchestrator::MovedToPlanetResult {
+                        explorer_id: self.explorer_id,
+                        planet_id: self.current_planet_id,
+                    })
                     .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
                 Ok(None)
             }
@@ -647,7 +764,6 @@ impl Explorer {
             }
 
             _ => Err("Unexpected message received.".to_string()),
-
             /*  Messages that aren't handled because unexpected:
                 OrchestratorToExplorer::StartExplorerAI => {
                     self.on_start();
@@ -660,9 +776,13 @@ impl Explorer {
     }
 
     // On START/STOP/KILL methods
-    fn on_stop(&mut self) { self.stopped = true; }
-    fn on_start(&mut self) { self.stopped = false; }
-    fn on_kill (&mut self) {
+    fn on_stop(&mut self) {
+        self.stopped = true;
+    }
+    fn on_start(&mut self) {
+        self.stopped = false;
+    }
+    fn on_kill(&mut self) {
         self.killed = true;
         self.awaiting_move = false;
         self.awaiting_neighbors = false;
@@ -678,7 +798,7 @@ impl Explorer {
         );
 
         match self.wait_for_start() {
-            Ok(true) => { return }
+            Ok(true) => return,
             Err(e) => {
                 self.log_internal(
                     Channel::Error,
@@ -687,7 +807,7 @@ impl Explorer {
                         ("error", e),
                     ]),
                 );
-                return
+                return;
             }
             _ => {}
         }
@@ -722,10 +842,13 @@ impl Explorer {
                             Channel::Debug,
                             kv([
                                 ("explorer", listener_name.clone()),
-                                ("detail", "listener: termination signal processed".to_string()),
+                                (
+                                    "detail",
+                                    "listener: termination signal processed".to_string(),
+                                ),
                             ]),
                         )
-                            .emit();
+                        .emit();
                         break;
                     }
                     Ok(_) => {}
@@ -740,7 +863,7 @@ impl Explorer {
                                 ("error", e),
                             ]),
                         )
-                            .emit();
+                        .emit();
                     }
                 }
             }
@@ -762,9 +885,13 @@ impl Explorer {
                         Channel::Warning,
                         kv([
                             ("explorer", ai_name.clone()),
-                            ("detail", "no AI behaviour injected; AI thread idle".to_string()),
+                            (
+                                "detail",
+                                "no AI behaviour injected; AI thread idle".to_string(),
+                            ),
                         ]),
-                    ).emit();
+                    )
+                    .emit();
                 }
             }
         });
@@ -781,15 +908,17 @@ impl Explorer {
                         })
                         .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
 
-                    return Ok(false)
+                    return Ok(false);
                 }
 
                 OrchestratorToExplorer::KillExplorer => {
                     self.tx_to_orchestrator
-                        .send(ExplorerToOrchestrator::KillExplorerResult { explorer_id: self.explorer_id })
+                        .send(ExplorerToOrchestrator::KillExplorerResult {
+                            explorer_id: self.explorer_id,
+                        })
                         .map_err(|_| ORCH_DISCONNECT_ERR.to_string())?;
 
-                    return Ok(true)
+                    return Ok(true);
                 }
 
                 OrchestratorToExplorer::ResetExplorerAI => {}
@@ -907,7 +1036,9 @@ pub(crate) struct AI {
 
 impl AI {
     pub(crate) fn new(slot: &SharedExplorer) -> Self {
-        AI { slot: Arc::clone(slot) }
+        AI {
+            slot: Arc::clone(slot),
+        }
     }
 
     /// Emit a structured self-directed log from inside a behaviour. Locks
@@ -928,7 +1059,7 @@ impl AI {
             channel,
             payload,
         )
-            .emit();
+        .emit();
     }
 
     // ---- orchestrator: fire + wait (delegates to existing helpers) ----
@@ -964,7 +1095,7 @@ impl AI {
         let (lock, _) = &*self.slot;
         let mut g = lock.lock().unwrap();
         let was_requested = g.reset_requested;
-        g.reset_requested = false;  // consume it so it only fires once
+        g.reset_requested = false; // consume it so it only fires once
         was_requested
     }
 
@@ -1044,7 +1175,7 @@ mod tests {
             rx_from_planet,
             explorer_id,
             current_planet_id,
-            |_ai| {} // Dummy behaviour vuoto per bypassare il loop AI
+            |_ai| {}, // Dummy behaviour vuoto per bypassare il loop AI
         );
 
         (exp, rx_orch, tx_to_exp, tx_planet, rx_planet)
@@ -1066,9 +1197,11 @@ mod tests {
             resources.insert(Oxygen);
             resources.insert(Carbon);
 
-            tx_planet.send(PlanetToExplorer::SupportedResourceResponse {
-                resource_list: resources,
-            }).unwrap();
+            tx_planet
+                .send(PlanetToExplorer::SupportedResourceResponse {
+                    resource_list: resources,
+                })
+                .unwrap();
         });
 
         let res = explorer.ask_planet_for_resources();
@@ -1095,9 +1228,11 @@ mod tests {
             let mut combos = HashSet::new();
             combos.insert(Water);
 
-            tx_planet.send(PlanetToExplorer::SupportedCombinationResponse {
-                combination_list: combos,
-            }).unwrap();
+            tx_planet
+                .send(PlanetToExplorer::SupportedCombinationResponse {
+                    combination_list: combos,
+                })
+                .unwrap();
         });
 
         let res = explorer.ask_planet_for_combinations();
@@ -1113,16 +1248,20 @@ mod tests {
         let (mut explorer, _rx_orch, _tx_to_exp, tx_planet, rx_planet) = make("FailBot", 12, 3);
 
         let planet_thread = thread::spawn(move || {
-            if let Ok(ExplorerToPlanet::GenerateResourceRequest { explorer_id, resource }) = rx_planet.recv_timeout(T) {
+            if let Ok(ExplorerToPlanet::GenerateResourceRequest {
+                explorer_id,
+                resource,
+            }) = rx_planet.recv_timeout(T)
+            {
                 assert_eq!(explorer_id, 12);
                 assert_eq!(resource, Oxygen);
             } else {
                 panic!("Expected GenerateResourceRequest message");
             }
 
-            tx_planet.send(PlanetToExplorer::GenerateResourceResponse {
-                resource: None,
-            }).unwrap();
+            tx_planet
+                .send(PlanetToExplorer::GenerateResourceResponse { resource: None })
+                .unwrap();
         });
 
         let res = explorer.generate_resource_from_planet(Oxygen);
@@ -1137,13 +1276,17 @@ mod tests {
         let (explorer, _rx_orch, _tx_to_exp, tx_planet, rx_planet) = make("EnergyBot", 13, 4);
 
         let planet_thread = thread::spawn(move || {
-            if let Ok(ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id }) = rx_planet.recv_timeout(T) {
+            if let Ok(ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id }) =
+                rx_planet.recv_timeout(T)
+            {
                 assert_eq!(explorer_id, 13);
             }
 
-            tx_planet.send(PlanetToExplorer::AvailableEnergyCellResponse {
-                available_cells: 42,
-            }).unwrap();
+            tx_planet
+                .send(PlanetToExplorer::AvailableEnergyCellResponse {
+                    available_cells: 42,
+                })
+                .unwrap();
         });
 
         let cells = explorer.ask_planet_for_available_energy_cells();
@@ -1182,7 +1325,9 @@ mod tests {
         assert!(explorer.current_neighbors.is_empty());
         assert!(explorer.current_generation_rules.is_empty());
 
-        if let Ok(ExplorerToOrchestrator::ResetExplorerAIResult { explorer_id }) = rx_orch.recv_timeout(T) {
+        if let Ok(ExplorerToOrchestrator::ResetExplorerAIResult { explorer_id }) =
+            rx_orch.recv_timeout(T)
+        {
             assert_eq!(explorer_id, 15);
         } else {
             panic!("L'esploratore non ha inviato ResetExplorerAIResult all'orchestrator");

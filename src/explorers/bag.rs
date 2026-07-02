@@ -1,4 +1,7 @@
-use common_game::components::resource::{BasicResource, BasicResourceType, ComplexResource, ComplexResourceType, GenericResource, ResourceType};
+use common_game::components::resource::{
+    BasicResource, BasicResourceType, ComplexResource, ComplexResourceType, GenericResource,
+    ResourceType,
+};
 use std::collections::HashMap;
 
 #[derive(Debug, Default)]
@@ -62,7 +65,10 @@ impl Bag {
         Some(resource)
     }
 
-    pub(crate) fn take_complex(&mut self, resource_type: ComplexResourceType) -> Option<ComplexResource> {
+    pub(crate) fn take_complex(
+        &mut self,
+        resource_type: ComplexResourceType,
+    ) -> Option<ComplexResource> {
         let index = self
             .complex_resources
             .iter()
@@ -82,8 +88,12 @@ impl Bag {
     #[allow(dead_code)]
     pub(crate) fn take_generic(&mut self, resource_type: ResourceType) -> Option<GenericResource> {
         match resource_type {
-            ResourceType::Basic(b_type) => self.take_basic(b_type).map(GenericResource::BasicResources),
-            ResourceType::Complex(c_type) => self.take_complex(c_type).map(GenericResource::ComplexResources),
+            ResourceType::Basic(b_type) => {
+                self.take_basic(b_type).map(GenericResource::BasicResources)
+            }
+            ResourceType::Complex(c_type) => self
+                .take_complex(c_type)
+                .map(GenericResource::ComplexResources),
         }
     }
 
@@ -98,7 +108,11 @@ impl Bag {
     /// Checks if the bag contains at least one complex resource of the specified type.
     #[allow(dead_code)]
     pub(crate) fn contains_complex(&self, resource_type: ComplexResourceType) -> bool {
-        self.complex_counts.get(&resource_type).copied().unwrap_or(0) > 0
+        self.complex_counts
+            .get(&resource_type)
+            .copied()
+            .unwrap_or(0)
+            > 0
     }
 
     // --- SNAPSHOT ---
@@ -125,11 +139,17 @@ pub struct BagSnapshot {
 impl BagSnapshot {
     /// Convenience method for the Orchestrator to easily check the count of a basic resource.
     pub fn get_basic_count(&self, resource_type: BasicResourceType) -> usize {
-        self.basic_resources.get(&resource_type).copied().unwrap_or(0)
+        self.basic_resources
+            .get(&resource_type)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Convenience method for the Orchestrator to easily check the count of a complex resource.
     pub fn get_complex_count(&self, resource_type: ComplexResourceType) -> usize {
-        self.complex_resources.get(&resource_type).copied().unwrap_or(0)
+        self.complex_resources
+            .get(&resource_type)
+            .copied()
+            .unwrap_or(0)
     }
 }

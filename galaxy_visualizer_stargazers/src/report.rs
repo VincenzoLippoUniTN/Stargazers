@@ -30,14 +30,26 @@ pub enum GalaxyReport {
     },
     /// Basic resources the explorer's current planet can generate
     /// (answer to `SupportedResources`).
-    SupportedResources { explorer_id: u32, resources: Vec<String> },
+    SupportedResources {
+        explorer_id: u32,
+        resources: Vec<String>,
+    },
     /// Combination recipes the explorer's current planet supports
     /// (answer to `SupportedCombinations`).
-    SupportedCombinations { explorer_id: u32, combinations: Vec<String> },
+    SupportedCombinations {
+        explorer_id: u32,
+        combinations: Vec<String>,
+    },
     /// Outcome of a `Generate` request.
-    Generated { explorer_id: u32, outcome: Result<(), String> },
+    Generated {
+        explorer_id: u32,
+        outcome: Result<(), String>,
+    },
     /// Outcome of a `Combine` request.
-    Combined { explorer_id: u32, outcome: Result<(), String> },
+    Combined {
+        explorer_id: u32,
+        outcome: Result<(), String>,
+    },
     /// A free-form status line (e.g. "explorer killed").
     Notice { text: String },
 }
@@ -46,7 +58,11 @@ impl GalaxyReport {
     /// Renders the report as one or more HUD lines.
     pub fn describe(&self) -> Vec<String> {
         match self {
-            GalaxyReport::Bag { explorer_id, basic, complex } => {
+            GalaxyReport::Bag {
+                explorer_id,
+                basic,
+                complex,
+            } => {
                 let mut lines = vec![format!("Explorer {explorer_id} bag:")];
                 if basic.is_empty() && complex.is_empty() {
                     lines.push("  (empty)".to_string());
@@ -60,17 +76,35 @@ impl GalaxyReport {
                 }
                 lines
             }
-            GalaxyReport::SupportedResources { explorer_id, resources } => {
-                vec![format!("Explorer {explorer_id} can generate: {}", join_or_none(resources))]
+            GalaxyReport::SupportedResources {
+                explorer_id,
+                resources,
+            } => {
+                vec![format!(
+                    "Explorer {explorer_id} can generate: {}",
+                    join_or_none(resources)
+                )]
             }
-            GalaxyReport::SupportedCombinations { explorer_id, combinations } => {
-                vec![format!("Explorer {explorer_id} can combine: {}", join_or_none(combinations))]
+            GalaxyReport::SupportedCombinations {
+                explorer_id,
+                combinations,
+            } => {
+                vec![format!(
+                    "Explorer {explorer_id} can combine: {}",
+                    join_or_none(combinations)
+                )]
             }
-            GalaxyReport::Generated { explorer_id, outcome } => match outcome {
+            GalaxyReport::Generated {
+                explorer_id,
+                outcome,
+            } => match outcome {
                 Ok(()) => vec![format!("Explorer {explorer_id}: generated a resource")],
                 Err(e) => vec![format!("Explorer {explorer_id}: generate failed ({e})")],
             },
-            GalaxyReport::Combined { explorer_id, outcome } => match outcome {
+            GalaxyReport::Combined {
+                explorer_id,
+                outcome,
+            } => match outcome {
                 Ok(()) => vec![format!("Explorer {explorer_id}: combined a resource")],
                 Err(e) => vec![format!("Explorer {explorer_id}: combine failed ({e})")],
             },
@@ -135,8 +169,15 @@ mod tests {
 
     #[test]
     fn empty_bag_reads_empty() {
-        let r = GalaxyReport::Bag { explorer_id: 1, basic: vec![], complex: vec![] };
-        assert_eq!(r.describe(), vec!["Explorer 1 bag:".to_string(), "  (empty)".to_string()]);
+        let r = GalaxyReport::Bag {
+            explorer_id: 1,
+            basic: vec![],
+            complex: vec![],
+        };
+        assert_eq!(
+            r.describe(),
+            vec!["Explorer 1 bag:".to_string(), "  (empty)".to_string()]
+        );
     }
 
     #[test]
@@ -154,8 +195,14 @@ mod tests {
 
     #[test]
     fn supported_resources_none_is_explicit() {
-        let r = GalaxyReport::SupportedResources { explorer_id: 3, resources: vec![] };
-        assert_eq!(r.describe(), vec!["Explorer 3 can generate: (none)".to_string()]);
+        let r = GalaxyReport::SupportedResources {
+            explorer_id: 3,
+            resources: vec![],
+        };
+        assert_eq!(
+            r.describe(),
+            vec!["Explorer 3 can generate: (none)".to_string()]
+        );
     }
 
     #[test]

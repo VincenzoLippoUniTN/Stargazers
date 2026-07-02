@@ -21,7 +21,7 @@ use common_game::utils::ID;
 // =========================================================================
 // INTERNAL MODULES
 // =========================================================================
-use crate::explorers::{roaming_explorer, BagSnapshot, Eleanor, Explorer, ExplorerBehaviour};
+use crate::explorers::{amon_behaviour, BagSnapshot, Eleanor, Explorer, ExplorerBehaviour};
 use crate::galaxy_layout::{build_galaxy, GalaxyLayout};
 use crate::visualizer::{kind_of, VizBridge};
 use galaxy_visualizer_stargazers::{GalaxyCommand, GalaxyReport, ReportSender};
@@ -33,6 +33,8 @@ use the_compiler_strikes_back::planet::create_planet as new_csb;
 use huston::{houston_we_have_a_borrow as new_hus, RocketStrategy};
 use one_million_crabs::planet::create_planet as new_omc;
 use ara_kees::planet::create_planet as new_bas;
+use common_game::components::resource::BasicResourceType;
+use common_game::components::resource::GenericResource::BasicResources;
 use trip::trip as new_trp;
 use immutable_cosmic_borrow::create_planet as new_icb;
 use rusty_crab_ap2025::planet::create_planet as new_ryc;
@@ -40,7 +42,7 @@ use rusty_crab_ap2025::planet::create_planet as new_ryc;
 // =========================================================================
 // TUNABLES
 // =========================================================================
-const TICK_INTERVAL: Duration = Duration::from_millis(500);
+const TICK_INTERVAL: Duration = Duration::from_millis(2000);
 
 /// Ticks before any asteroid is sent (10 ticks = 5 s).
 const WARMUP_TICKS: u32 = 10;
@@ -189,11 +191,10 @@ impl Orchestrator {
         let (tx_from_planet, from_planets) = unbounded::<PlanetToOrchestrator>();
         let (tx_from_explorer, from_explorers) = unbounded::<ExplorerToOrchestrator<BagSnapshot>>();
 
-        // --- Planets (group-specific constructors; adjust args to your tree) ---
         let csb = spawn_planet("CSB", tx_from_planet.clone(), |rx, tx, rx_exp|
             new_csb(rx, tx, rx_exp, 1));
         let hus = spawn_planet("HUS", tx_from_planet.clone(), |rx, tx, rx_exp| {
-            new_hus(rx, tx, rx_exp, 2, RocketStrategy::Safe, None).expect("Failed to create HUS") });
+            new_hus(rx, tx, rx_exp, 2, RocketStrategy::Safe, Some(BasicResourceType::Carbon)).expect("Failed to create HUS") });
         let omc = spawn_planet("OMC", tx_from_planet.clone(), |rx, tx, rx_exp| {
             new_omc(rx, tx, rx_exp, 3).expect("Failed to create OMC") });
         let bas = spawn_planet("BAS", tx_from_planet.clone(), |rx, tx, rx_exp| {
@@ -215,11 +216,11 @@ impl Orchestrator {
         planets.insert(7, ryc);
 
         // --- Explorers, wired to their start planets' explorer->planet senders ---
-        let anon = spawn_explorer(
-            "Anon", 101, 1,
+        let amon = spawn_explorer(
+            "Amon", 101, 1,
             tx_from_explorer.clone(),
             planets[&1].to_planet_from_explorer.clone(),
-            roaming_explorer,
+            amon_behaviour,
         );
         let eleanor = spawn_explorer(
             "Eleanor", 102, 4,
@@ -232,7 +233,7 @@ impl Orchestrator {
         );
 
         let mut explorers = HashMap::new();
-        explorers.insert(101, anon);
+        explorers.insert(101, amon);
         explorers.insert(102, eleanor);
 
 
